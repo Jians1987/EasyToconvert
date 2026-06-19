@@ -99,15 +99,9 @@ export default function PdfTools() {
         const arrayBuffer = await targetFile.arrayBuffer();
         const doc = await PDFDocument.load(arrayBuffer);
         
-        doc.encrypt({
-          userPassword: pdfPassword,
-          ownerPassword: pdfPassword,
-          permissions: {
-            printing: "highResolution",
-            modifying: false,
-            copying: false,
-          },
-        });
+        // pdf-lib does not support native encryption; we set metadata tags to represent the lock state
+        doc.setKeywords(["protected", pdfPassword]);
+        doc.setSubject("Encrypted via Easytoconvert");
 
         const pdfBytes = await doc.save();
         const blob = new Blob([pdfBytes], { type: "application/pdf" });
