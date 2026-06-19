@@ -87,9 +87,7 @@ export default function Navbar() {
               <Sparkles className="w-4 h-4 text-purple-400" />
               <span>AI</span>
             </Link>
-            <Link href="/pricing" className="text-slate-600 dark:text-slate-300 hover:text-primary dark:hover:text-primary transition-all text-sm font-medium">
-              Pricing
-            </Link>
+
           </div>
 
           {/* Actions & Utilities */}
@@ -193,13 +191,7 @@ export default function Navbar() {
             >
               AI Tools
             </Link>
-            <Link
-              href="/pricing"
-              onClick={() => setIsOpen(false)}
-              className="block px-3 py-2 rounded-md text-base font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900"
-            >
-              Pricing
-            </Link>
+
             <Link
               href="/dashboard"
               onClick={() => setIsOpen(false)}

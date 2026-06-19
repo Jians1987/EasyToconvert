@@ -57,16 +57,10 @@ export default function Dashboard() {
           </p>
         </div>
         <div className="flex items-center space-x-2">
-          <span className="text-xs px-2.5 py-1 rounded-full border border-indigo-200/50 dark:border-indigo-800/40 bg-indigo-50/50 dark:bg-indigo-950/20 text-indigo-600 dark:text-indigo-400 font-semibold flex items-center space-x-1.5">
-            <Lock className="w-3.5 h-3.5" />
-            <span>Free Tier Plan</span>
+          <span className="text-xs px-2.5 py-1 rounded-full border border-emerald-250/50 dark:border-emerald-800/40 bg-emerald-50/50 dark:bg-emerald-950/20 text-emerald-600 dark:text-emerald-400 font-semibold flex items-center space-x-1.5">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span>Unlimited Free Account</span>
           </span>
-          <Link
-            href="/pricing"
-            className="px-4 py-1.5 rounded-lg text-xs font-semibold bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-md hover:opacity-90 transition-all"
-          >
-            Upgrade to Pro
-          </Link>
         </div>
       </div>
 
@@ -125,7 +119,7 @@ export default function Dashboard() {
               API Access Credentials
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Integrate Easytoconvert utility microservices directly into your scripts or pipelines. (Pro plan requires for production keys).
+              Integrate Easytoconvert utility microservices directly into your scripts or pipelines.
             </p>
 
             <div className="space-y-3">

@@ -302,15 +302,15 @@ export default function LandingPage() {
           <div className="flex flex-col sm:flex-row justify-center items-center gap-3 pt-2">
             <Link
               href="/dashboard"
-              className="px-6 py-3 rounded-xl bg-white text-indigo-700 font-semibold shadow-lg hover:bg-slate-50 transition-all w-full sm:w-auto"
+              className="px-6 py-3 rounded-xl bg-white text-indigo-650 text-indigo-650 bg-white text-indigo-600 font-semibold shadow-lg hover:bg-slate-50 transition-all w-full sm:w-auto"
             >
               Go to Dashboard
             </Link>
             <Link
-              href="/pricing"
+              href="/developer"
               className="px-6 py-3 rounded-xl border border-white/40 hover:bg-white/10 font-semibold transition-all w-full sm:w-auto"
             >
-              See Pricing
+              Explore Dev Tools
             </Link>
           </div>
         </div>

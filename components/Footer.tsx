@@ -107,8 +107,8 @@ export default function Footer() {
             <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-200 mb-4">Platform</h4>
             <ul className="space-y-2 text-xs">
               <li>
-                <Link href="/pricing" className="text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-all">
-                  Pricing Plans
+                <Link href="https://github.com/Jians1987/EasyToconvert" className="text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-all">
+                  GitHub Source
                 </Link>
               </li>
               <li>
