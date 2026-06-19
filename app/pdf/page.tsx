@@ -118,19 +118,55 @@ export default function PdfTools() {
       } else if (mode === "to-doc") {
         const targetFile = selectedFiles[0];
         const arrayBuffer = await targetFile.arrayBuffer();
-        const doc = await PDFDocument.load(arrayBuffer);
-        const pageCount = doc.getPageCount();
+
+        // Dynamically load PDF.js from CDN to extract text
+        let pdfText = "";
+        let pageCount = 0;
+        try {
+          const pdfjsLib = await new Promise<any>((resolve, reject) => {
+            if (typeof window !== "undefined" && (window as any).pdfjsLib) {
+              resolve((window as any).pdfjsLib);
+              return;
+            }
+            const script = document.createElement("script");
+            script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+            script.onload = () => {
+              (window as any).pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+              resolve((window as any).pdfjsLib);
+            };
+            script.onerror = () => reject(new Error("Failed to load PDF.js engine."));
+            document.head.appendChild(script);
+          });
+
+          const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+          pageCount = pdf.numPages;
+
+          for (let i = 1; i <= pageCount; i++) {
+            const page = await pdf.getPage(i);
+            const textContent = await page.getTextContent();
+            const pageText = textContent.items.map((item: any) => item.str).join(" ");
+            pdfText += `<h3>Page ${i}</h3><p>${pageText || "[No text found on this page]"}</p><br/>`;
+          }
+        } catch (e) {
+          console.error("PDF.js extraction failed, falling back to basic metadata extraction:", e);
+          const doc = await PDFDocument.load(arrayBuffer);
+          pageCount = doc.getPageCount();
+          pdfText = `<p>[PDF.js text extraction bypassed. Preserved metadata and page count: ${pageCount} pages.]</p>`;
+        }
 
         const docContent = `
           <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
-          <head><title>Converted PDF</title><style>body { font-family: Arial, sans-serif; padding: 20px; }</style></head>
+          <head><title>Converted PDF</title><style>body { font-family: Arial, sans-serif; padding: 20px; line-height: 1.5; }</style></head>
           <body>
             <h2>Converted Document: ${targetFile.name}</h2>
             <p>File Size: ${(targetFile.size / 1024).toFixed(1)} KB</p>
-            <p>This document was converted from PDF to Word using Easytoconvert. Below is the parsed text output structure:</p>
+            <p>Total Pages: ${pageCount}</p>
+            <p>This document was converted from PDF to Word using Easytoconvert.</p>
             <hr/>
-            <p><b>[Document Extract]</b></p>
-            <p>Easytoconvert Core Engine parsed ${pageCount} pages from this file. Text alignment and layout structure has been preserved locally.</p>
+            <h3>Document Text Content:</h3>
+            <div>
+              ${pdfText}
+            </div>
           </body>
           </html>
         `;
