@@ -57,7 +57,7 @@ export default function Dashboard() {
           </p>
         </div>
         <div className="flex items-center space-x-2">
-          <span className="text-xs px-2.5 py-1 rounded-full border border-emerald-250/50 dark:border-emerald-800/40 bg-emerald-50/50 dark:bg-emerald-950/20 text-emerald-600 dark:text-emerald-400 font-semibold flex items-center space-x-1.5">
+          <span className="text-xs px-2.5 py-1 rounded-full border border-emerald-200/50 dark:border-emerald-800/40 bg-emerald-50/50 dark:bg-emerald-950/20 text-emerald-600 dark:text-emerald-400 font-semibold flex items-center space-x-1.5">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
             <span>Unlimited Free Account</span>
           </span>
@@ -201,7 +201,7 @@ export default function Dashboard() {
                 {favorites.map((toolId) => (
                   <div
                     key={toolId}
-                    className="p-2 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200/40 dark:border-slate-850 flex items-center justify-between text-xs"
+                    className="p-2 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200/40 dark:border-slate-800 flex items-center justify-between text-xs"
                   >
                     <span className="font-medium capitalize">{toolId.replace("-", " ")}</span>
                     <button
@@ -226,7 +226,7 @@ export default function Dashboard() {
       <div className="glass-card p-6 space-y-6">
         <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
           <div>
-            <h3 className="font-bold text-sm uppercase tracking-wider text-slate-450 flex items-center space-x-2">
+            <h3 className="font-bold text-sm uppercase tracking-wider text-slate-400 flex items-center space-x-2">
               <RefreshCw className="w-4 h-4 text-indigo-500 animate-spin-slow" />
               <span>Local Download History</span>
             </h3>
@@ -281,7 +281,7 @@ export default function Dashboard() {
                         <a
                           href={item.downloadUrl}
                           download={item.fileName}
-                          className="inline-flex items-center space-x-1 px-2.5 py-1 rounded bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 dark:bg-slate-900 dark:hover:bg-indigo-950/20 dark:hover:text-indigo-400 border border-slate-250 dark:border-slate-800 transition-all font-semibold"
+                          className="inline-flex items-center space-x-1 px-2.5 py-1 rounded bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 dark:bg-slate-900 dark:hover:bg-indigo-950/20 dark:hover:text-indigo-400 border border-slate-200 dark:border-slate-800 transition-all font-semibold"
                         >
                           <Download className="w-3.5 h-3.5" />
                           <span>Fetch</span>

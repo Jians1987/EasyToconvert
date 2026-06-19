@@ -4,7 +4,7 @@ import React, { useState, useRef } from "react";
 import ToolLayout from "@/components/ToolLayout";
 import Dropzone from "@/components/Dropzone";
 import { useConversions } from "@/app/providers";
-import { Video, Music, Star, Sliders, Play, Pause, Scissors, Download, RefreshCw } from "lucide-react";
+import { Video, Music, Star } from "lucide-react";
 
 type MediaMode = "compress" | "extract" | "audio-trim";
 
@@ -17,8 +17,8 @@ export default function MediaTools() {
   const [trimStart, setTrimStart] = useState(0);
   const [trimEnd, setTrimEnd] = useState(10);
   const [playing, setPlaying] = useState(false);
-  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
-  
+  const [comingSoon, setComingSoon] = useState(false);
+
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioBufferRef = useRef<AudioBuffer | null>(null);
   const { addHistoryItem, favorites, toggleFavorite } = useConversions();
@@ -26,32 +26,12 @@ export default function MediaTools() {
   const handleFilesSelected = (files: File[]) => {
     if (files.length > 0) {
       setSelectedFile(files[0]);
-      setDownloadUrl(null);
       setPlaying(false);
     }
   };
 
-  const processMedia = async () => {
-    if (!selectedFile) return;
-    setProcessing(true);
-    setDownloadUrl(null);
-
-    // Simulate conversion latency
-    setTimeout(() => {
-      // Create mockup download link
-      const blob = new Blob([new Uint8Array(1000)], { type: mode === "extract" ? "audio/mp3" : selectedFile.type });
-      const url = URL.createObjectURL(blob);
-      setDownloadUrl(url);
-      setProcessing(false);
-
-      addHistoryItem({
-        fileName: mode === "extract" ? `extracted_${selectedFile.name.split(".")[0]}.mp3` : `optimized_${selectedFile.name}`,
-        fileSize: blob.size,
-        toolType: `media-${mode}`,
-        status: "success",
-        downloadUrl: url,
-      });
-    }, 2500);
+  const processMedia = () => {
+    setComingSoon(true);
   };
 
   const isPinned = favorites.includes("media-tools");
@@ -75,7 +55,7 @@ export default function MediaTools() {
                 key={t.id}
                 onClick={() => {
                   setMode(t.id as MediaMode);
-                  setDownloadUrl(null);
+                  setComingSoon(false);
                   setSelectedFile(null);
                 }}
                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${
@@ -112,6 +92,18 @@ export default function MediaTools() {
             mode === "audio-trim" ? "Upload an audio file to trim" : "Upload media (MP4, AVI, MP3, WAV)"
           }
         />
+
+        {/* Coming Soon Banner */}
+        {comingSoon && (
+          <div className="p-4 rounded-xl border border-amber-400/30 bg-amber-50 dark:bg-amber-900/20 text-center space-y-2">
+            <p className="text-sm font-semibold text-amber-700 dark:text-amber-300">
+              🚧 Coming Soon
+            </p>
+            <p className="text-xs text-amber-600 dark:text-amber-400 max-w-lg mx-auto">
+              Browser-based media processing requires FFmpeg WebAssembly integration which is coming soon. For now, try our working PDF, Image, Data, and Developer tools!
+            </p>
+          </div>
+        )}
 
         {/* Media configurations */}
         {selectedFile && (
@@ -159,9 +151,9 @@ export default function MediaTools() {
                 <div className="flex items-center space-x-3 text-xs">
                   <button
                     onClick={() => setPlaying(!playing)}
-                    className="p-2 rounded-full bg-indigo-500 text-white hover:bg-indigo-650"
+                    className="p-2 rounded-full bg-indigo-500 text-white hover:bg-indigo-600"
                   >
-                    {playing ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                    {playing ? <Music className="w-4 h-4" /> : <Video className="w-4 h-4" />}
                   </button>
                   <span className="font-mono text-slate-500 truncate max-w-xs">{selectedFile.name}</span>
                 </div>
@@ -193,39 +185,15 @@ export default function MediaTools() {
             {/* Action button */}
             <button
               onClick={processMedia}
-              disabled={processing}
-              className="px-6 py-2.5 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-755 text-white disabled:opacity-50 transition-all flex items-center space-x-1.5 shadow-md"
+              disabled={true}
+              className="px-6 py-2.5 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50 transition-all flex items-center space-x-1.5 shadow-md cursor-not-allowed"
             >
-              <span>{processing ? "Compressing / Extracting..." : `Apply Media ${mode}`}</span>
+              <span>Coming Soon</span>
             </button>
           </div>
         )}
 
-        {/* Download Output */}
-        {downloadUrl && (
-          <div className="p-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <div className="p-2 rounded bg-emerald-500/10 text-emerald-500">
-                <Music className="w-5 h-5" />
-              </div>
-              <div>
-                <span className="text-xs font-bold text-slate-850 dark:text-slate-250 block">Success! File Ready</span>
-                <span className="text-[10px] text-slate-450 text-slate-400">Your processed media file is ready for download.</span>
-              </div>
-            </div>
-            <a
-              href={downloadUrl}
-              download={
-                mode === "extract"
-                  ? `extracted_${selectedFile ? selectedFile.name.split(".")[0] : "audio"}.mp3`
-                  : `optimized_${selectedFile ? selectedFile.name : "media"}`
-              }
-              className="px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-500 hover:bg-emerald-600 text-white transition-all shadow-sm"
-            >
-              Download File
-            </a>
-          </div>
-        )}
+
       </div>
     </ToolLayout>
   );

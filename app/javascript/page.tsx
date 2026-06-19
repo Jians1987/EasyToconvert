@@ -298,7 +298,7 @@ export default function JavascriptTools() {
             <div className="space-y-6 flex flex-col items-center">
               <div className="w-full h-36 flex items-center justify-center bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200/50 dark:border-slate-800/50">
                 <div
-                  className="w-24 h-16 bg-white dark:bg-slate-900 border border-slate-250 dark:border-slate-800 rounded-lg transition-all"
+                  className="w-24 h-16 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg transition-all"
                   style={{
                     boxShadow: `${hOffset}px ${vOffset}px ${blur}px ${spread}px rgba(${
                       parseInt(shadowColor.substring(1, 3), 16) || 0
@@ -333,7 +333,7 @@ export default function JavascriptTools() {
                     className={`px-3 py-1 rounded text-xs font-semibold capitalize border ${
                       codeType === t
                         ? "border-indigo-500 bg-indigo-50/10 text-indigo-500"
-                        : "border-slate-250 dark:border-slate-800 hover:border-slate-350"
+                        : "border-slate-200 dark:border-slate-800 hover:border-slate-300"
                     }`}
                   >
                     {t.toUpperCase()}
@@ -379,7 +379,7 @@ export default function JavascriptTools() {
             <div className="pt-2">
               <button
                 onClick={mode === "minify" ? handleMinify : handleHtmlBeautify}
-                className="px-6 py-2.5 rounded-lg text-xs font-semibold bg-indigo-650 bg-indigo-600 text-white shadow-md"
+                className="px-6 py-2.5 rounded-lg text-xs font-semibold bg-indigo-600 text-white shadow-md"
               >
                 {mode === "minify" ? `Apply ${codeType.toUpperCase()} Minification` : "Beautify HTML Code"}
               </button>

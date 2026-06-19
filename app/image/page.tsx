@@ -4,7 +4,7 @@ import React, { useState } from "react";
 import ToolLayout from "@/components/ToolLayout";
 import Dropzone from "@/components/Dropzone";
 import { useConversions } from "@/app/providers";
-import { Image as ImageIcon, Star, Settings, Download, Crop, Sliders } from "lucide-react";
+import { Image as ImageIcon, Star } from "lucide-react";
 
 type ImageMode = "convert" | "compress" | "resize" | "metadata";
 
@@ -17,6 +17,7 @@ export default function ImageTools() {
   const [resizeWidth, setResizeWidth] = useState(800);
   const [resizeHeight, setResizeHeight] = useState(600);
   const [maintainAspect, setMaintainAspect] = useState(true);
+  const [originalDimensions, setOriginalDimensions] = useState<{w: number, h: number} | null>(null);
   const [metadata, setMetadata] = useState<{ [key: string]: string } | null>(null);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const { addHistoryItem, favorites, toggleFavorite } = useConversions();
@@ -26,7 +27,7 @@ export default function ImageTools() {
     setDownloadUrl(null);
     setMetadata(null);
 
-    // Read metadata if mode is metadata
+    // Read metadata and original dimensions
     if (files.length > 0) {
       const file = files[0];
       setMetadata({
@@ -35,6 +36,16 @@ export default function ImageTools() {
         "Mime Type": file.type,
         "Last Modified": new Date(file.lastModified).toLocaleDateString(),
       });
+
+      // Read original image dimensions
+      const imgEl = new window.Image();
+      imgEl.onload = () => {
+        setOriginalDimensions({ w: imgEl.width, h: imgEl.height });
+        setResizeWidth(imgEl.width);
+        setResizeHeight(imgEl.height);
+        URL.revokeObjectURL(imgEl.src);
+      };
+      imgEl.src = URL.createObjectURL(file);
     }
   };
 
@@ -47,7 +58,7 @@ export default function ImageTools() {
     const reader = new FileReader();
 
     reader.onload = (e) => {
-      const img = new Image();
+      const img = new window.Image();
       img.onload = () => {
         const canvas = document.createElement("canvas");
         const ctx = canvas.getContext("2d");
@@ -74,7 +85,7 @@ export default function ImageTools() {
           setDownloadUrl(dataUrl);
 
           // Parse estimated size
-          const strLength = dataUrl.length - "data:image/png;base64,".length;
+          const strLength = dataUrl.length - (dataUrl.indexOf(',') + 1);
           const estSize = Math.round(strLength * 3 / 4);
 
           addHistoryItem({
@@ -180,25 +191,48 @@ export default function ImageTools() {
             )}
 
             {mode === "resize" && (
-              <div className="grid grid-cols-2 gap-4 max-w-xs">
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold text-slate-400">Width (px)</label>
-                  <input
-                    type="number"
-                    className="w-full glass-input text-xs"
-                    value={resizeWidth}
-                    onChange={(e) => setResizeWidth(Number(e.target.value))}
-                  />
+              <div className="space-y-3 max-w-xs">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold text-slate-400">Width (px)</label>
+                    <input
+                      type="number"
+                      className="w-full glass-input text-xs"
+                      value={resizeWidth}
+                      onChange={(e) => {
+                        const newW = Number(e.target.value);
+                        setResizeWidth(newW);
+                        if (maintainAspect && originalDimensions && originalDimensions.w > 0) {
+                          setResizeHeight(Math.round(newW * (originalDimensions.h / originalDimensions.w)));
+                        }
+                      }}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold text-slate-400">Height (px)</label>
+                    <input
+                      type="number"
+                      className="w-full glass-input text-xs"
+                      value={resizeHeight}
+                      onChange={(e) => {
+                        const newH = Number(e.target.value);
+                        setResizeHeight(newH);
+                        if (maintainAspect && originalDimensions && originalDimensions.h > 0) {
+                          setResizeWidth(Math.round(newH * (originalDimensions.w / originalDimensions.h)));
+                        }
+                      }}
+                    />
+                  </div>
                 </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold text-slate-400">Height (px)</label>
+                <label className="flex items-center space-x-2 cursor-pointer">
                   <input
-                    type="number"
-                    className="w-full glass-input text-xs"
-                    value={resizeHeight}
-                    onChange={(e) => setResizeHeight(Number(e.target.value))}
+                    type="checkbox"
+                    checked={maintainAspect}
+                    onChange={(e) => setMaintainAspect(e.target.checked)}
+                    className="accent-indigo-500"
                   />
-                </div>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">Maintain Aspect Ratio</span>
+                </label>
               </div>
             )}
 
@@ -221,7 +255,7 @@ export default function ImageTools() {
               <button
                 onClick={processImage}
                 disabled={processing}
-                className="px-6 py-2.5 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-755 text-white disabled:opacity-50 transition-all flex items-center space-x-1.5 shadow-md"
+                className="px-6 py-2.5 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50 transition-all flex items-center space-x-1.5 shadow-md"
               >
                 <span>{processing ? "Processing Image..." : `Apply Image ${mode}`}</span>
               </button>
@@ -237,13 +271,13 @@ export default function ImageTools() {
                 <ImageIcon className="w-5 h-5" />
               </div>
               <div>
-                <span className="text-xs font-bold text-slate-850 dark:text-slate-250 block">Success! Image Ready</span>
-                <span className="text-[10px] text-slate-450 text-slate-400">Your processed image is ready for download.</span>
+                <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">Success! Image Ready</span>
+                <span className="text-[10px] text-slate-400">Your processed image is ready for download.</span>
               </div>
             </div>
             <a
               href={downloadUrl}
-              download={`processed_${Date.now()}.${targetFormat.split("/")[1] || "png"}`}
+              download={`processed_${Date.now()}.${mode === "convert" ? (targetFormat.split("/")[1] || "png") : (selectedFiles[0]?.type.split("/")[1] || "png")}`}
               className="px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-500 hover:bg-emerald-600 text-white transition-all shadow-sm"
             >
               Download Image

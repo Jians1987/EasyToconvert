@@ -70,7 +70,7 @@ export default function Contact() {
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold text-slate-450 text-slate-400">Your Name</label>
+                  <label className="text-[10px] uppercase font-bold text-slate-400">Your Name</label>
                   <input
                     type="text"
                     required
@@ -81,7 +81,7 @@ export default function Contact() {
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold text-slate-450 text-slate-400">Email Address</label>
+                  <label className="text-[10px] uppercase font-bold text-slate-400">Email Address</label>
                   <input
                     type="email"
                     required
@@ -94,7 +94,7 @@ export default function Contact() {
               </div>
 
               <div className="space-y-1">
-                <label className="text-[10px] uppercase font-bold text-slate-450 text-slate-400">Your Message</label>
+                <label className="text-[10px] uppercase font-bold text-slate-400">Your Message</label>
                 <textarea
                   rows={4}
                   required

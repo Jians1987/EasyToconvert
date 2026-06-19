@@ -97,14 +97,12 @@ export default function DataTools() {
         }
       }
 
-      // Add operation log to history
       addHistoryItem({
         fileName: `${mode}_log_${Date.now()}.txt`,
         fileSize: inputText.length,
         toolType: `data-${mode}`,
         status: "success",
       });
-
     } catch (err: any) {
       setError(err.message || "Failed to process data structure.");
     }
@@ -190,7 +188,7 @@ export default function DataTools() {
               <label className="text-[10px] uppercase font-bold text-slate-400">Input Data</label>
               <button
                 onClick={() => setInputText("")}
-                className="text-[10px] text-slate-450 hover:text-slate-655 hover:text-indigo-500"
+                className="text-[10px] text-slate-400 hover:text-indigo-500"
               >
                 Clear
               </button>
@@ -219,7 +217,7 @@ export default function DataTools() {
               {outputText && (
                 <button
                   onClick={copyToClipboard}
-                  className="text-[10px] text-slate-400 hover:text-indigo-550 flex items-center space-x-1 hover:text-indigo-500 font-semibold"
+                  className="text-[10px] text-slate-400 hover:text-indigo-500 flex items-center space-x-1 font-semibold"
                 >
                   {copied ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
                   <span>{copied ? "Copied!" : "Copy Result"}</span>
@@ -250,7 +248,7 @@ export default function DataTools() {
             <>
               <button
                 onClick={() => handleAction("beautify")}
-                className="px-5 py-2.5 rounded-lg text-xs font-semibold bg-indigo-650 bg-indigo-650 bg-indigo-650 bg-indigo-600 text-white shadow-md hover:opacity-90 transition-all"
+                className="px-5 py-2.5 rounded-lg text-xs font-semibold bg-indigo-600 text-white shadow-md hover:opacity-90 transition-all"
               >
                 Beautify JSON
               </button>

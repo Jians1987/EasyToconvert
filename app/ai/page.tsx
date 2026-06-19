@@ -183,7 +183,7 @@ export default function AiTools() {
             <button
               onClick={executeAi}
               disabled={processing || (mode === "summarize" && !selectedFile) || (mode !== "summarize" && !inputText)}
-              className="w-full py-2.5 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-755 text-white disabled:opacity-50 transition-all flex items-center justify-center space-x-1.5"
+              className="w-full py-2.5 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50 transition-all flex items-center justify-center space-x-1.5"
             >
               <BrainCircuit className="w-4 h-4 animate-pulse-slow" />
               <span>{processing ? "Generating AI Response..." : `Run AI ${mode}`}</span>
@@ -200,7 +200,7 @@ export default function AiTools() {
                   <span>Parsing parameters and consulting LLM model...</span>
                 </div>
               ) : outputText ? (
-                <div className="prose dark:prose-invert max-w-none text-slate-700 dark:text-slate-350">
+                <div className="prose dark:prose-invert max-w-none text-slate-700 dark:text-slate-300">
                   <div className="flex items-center space-x-2 text-indigo-500 mb-3 border-b dark:border-slate-800 pb-2">
                     <Sparkles className="w-4 h-4" />
                     <span className="font-bold text-xs uppercase tracking-wide">AI Generation Complete</span>

@@ -117,7 +117,7 @@ print(response.json())`
                     <h5 className="text-[10px] uppercase font-bold text-slate-400">Parameters</h5>
                     <table className="w-full text-left text-xs border-collapse">
                       <thead>
-                        <tr className="border-b border-slate-100 dark:border-slate-850 text-slate-400 text-[10px] uppercase">
+                        <tr className="border-b border-slate-100 dark:border-slate-800 text-slate-400 text-[10px] uppercase">
                           <th className="py-2 font-medium">Name</th>
                           <th className="py-2 font-medium">Type</th>
                           <th className="py-2 font-medium">Required</th>
@@ -144,9 +144,9 @@ print(response.json())`
 
         {/* Code Generator & Console */}
         <div className="space-y-6">
-          <div className="glass-card p-6 bg-slate-900 text-slate-100 border-slate-850 space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-850 pb-3">
-              <h3 className="font-bold text-xs uppercase tracking-wider text-slate-450 flex items-center space-x-1.5">
+          <div className="glass-card p-6 bg-slate-900 text-slate-100 border-slate-800 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <h3 className="font-bold text-xs uppercase tracking-wider text-slate-400 flex items-center space-x-1.5">
                 <Terminal className="w-4 h-4 text-indigo-400" />
                 <span>Code Sandbox</span>
               </h3>
@@ -168,7 +168,7 @@ print(response.json())`
             </div>
 
             <div className="relative">
-              <pre className="font-mono text-xs overflow-x-auto p-3 bg-slate-950 rounded-xl max-h-[300px] border border-slate-850 leading-relaxed">
+              <pre className="font-mono text-xs overflow-x-auto p-3 bg-slate-950 rounded-xl max-h-[300px] border border-slate-800 leading-relaxed">
                 <code>{codeSnippets[selectedLanguage]}</code>
               </pre>
               <button

@@ -55,7 +55,7 @@ export default function Blog() {
               </p>
             </div>
 
-            <div className="pt-6 mt-6 border-t border-slate-100 dark:border-slate-850 flex flex-col space-y-3">
+            <div className="pt-6 mt-6 border-t border-slate-100 dark:border-slate-800 flex flex-col space-y-3">
               <div className="flex items-center justify-between text-[10px] text-slate-400">
                 <span className="flex items-center space-x-1">
                   <Calendar className="w-3.5 h-3.5" />

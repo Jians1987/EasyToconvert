@@ -310,7 +310,7 @@ export default function DevTools() {
             <>
               <button
                 onClick={() => handleBase64("encode")}
-                className="px-5 py-2.5 rounded-lg text-xs font-semibold bg-indigo-650 bg-indigo-600 text-white shadow-md"
+                className="px-5 py-2.5 rounded-lg text-xs font-semibold bg-indigo-600 text-white shadow-md"
               >
                 Base64 Encode
               </button>
@@ -327,7 +327,7 @@ export default function DevTools() {
             <>
               <button
                 onClick={() => handleUrl("encode")}
-                className="px-5 py-2.5 rounded-lg text-xs font-semibold bg-indigo-650 bg-indigo-600 text-white shadow-md"
+                className="px-5 py-2.5 rounded-lg text-xs font-semibold bg-indigo-600 text-white shadow-md"
               >
                 URL Encode
               </button>
@@ -343,7 +343,7 @@ export default function DevTools() {
           {mode === "uuid" && (
             <button
               onClick={() => generateUuid(5)}
-              className="px-5 py-2.5 rounded-lg text-xs font-semibold bg-indigo-650 bg-indigo-600 text-white shadow-md flex items-center space-x-1.5"
+              className="px-5 py-2.5 rounded-lg text-xs font-semibold bg-indigo-600 text-white shadow-md flex items-center space-x-1.5"
             >
               <RefreshCw className="w-3.5 h-3.5" />
               <span>Generate 5 UUIDs</span>
@@ -353,7 +353,7 @@ export default function DevTools() {
           {mode === "password" && (
             <button
               onClick={generatePassword}
-              className="px-5 py-2.5 rounded-lg text-xs font-semibold bg-indigo-650 bg-indigo-600 text-white shadow-md flex items-center space-x-1.5"
+              className="px-5 py-2.5 rounded-lg text-xs font-semibold bg-indigo-600 text-white shadow-md flex items-center space-x-1.5"
             >
               <RefreshCw className="w-3.5 h-3.5" />
               <span>Generate Password</span>
@@ -363,7 +363,7 @@ export default function DevTools() {
           {mode === "qrcode" && (
             <button
               onClick={generateQrCode}
-              className="px-5 py-2.5 rounded-lg text-xs font-semibold bg-indigo-650 bg-indigo-600 text-white shadow-md"
+              className="px-5 py-2.5 rounded-lg text-xs font-semibold bg-indigo-600 text-white shadow-md"
             >
               Create QR Code
             </button>
