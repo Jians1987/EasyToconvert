@@ -144,8 +144,40 @@ export default function PdfTools() {
           for (let i = 1; i <= pageCount; i++) {
             const page = await pdf.getPage(i);
             const textContent = await page.getTextContent();
-            const pageText = textContent.items.map((item: any) => item.str).join(" ");
-            pdfText += `<h3>Page ${i}</h3><p>${pageText || "[No text found on this page]"}</p><br/>`;
+            const items = textContent.items;
+
+            // Advanced layout-aware sorting: Sort primarily by Y-coordinate (top to bottom)
+            // and secondarily by X-coordinate (left to right)
+            const sortedItems = [...items].sort((a: any, b: any) => {
+              const yDiff = b.transform[5] - a.transform[5]; // Y is index 5
+              if (Math.abs(yDiff) > 5) { // 5px threshold for lines
+                return yDiff;
+              }
+              return a.transform[4] - b.transform[4]; // X is index 4
+            });
+
+            let pageText = "";
+            let lastY = -1;
+            
+            for (const item of sortedItems) {
+              const y = item.transform[5];
+              const text = item.str.trim();
+              if (!text) continue;
+
+              if (lastY === -1) {
+                pageText += text;
+                lastY = y;
+              } else if (Math.abs(lastY - y) > 5) {
+                // New line/paragraph break
+                pageText += "<br/>" + text;
+                lastY = y;
+              } else {
+                // Same line, append with space
+                pageText += " " + text;
+              }
+            }
+
+            pdfText += `<h3>Page ${i}</h3><div>${pageText || "<i>[Scanned page or no text elements found on this page. Try AI OCR tools.]</i>"}</div><br/><hr/><br/>`;
           }
         } catch (e) {
           console.error("PDF.js extraction failed, falling back to basic metadata extraction:", e);
@@ -156,7 +188,7 @@ export default function PdfTools() {
 
         const docContent = `
           <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
-          <head><title>Converted PDF</title><style>body { font-family: Arial, sans-serif; padding: 20px; line-height: 1.5; }</style></head>
+          <head><title>Converted PDF</title><style>body { font-family: Arial, sans-serif; padding: 20px; line-height: 1.6; color: #333333; } h3 { color: #4f46e5; border-bottom: 1px solid #e5e7eb; padding-bottom: 5px; }</style></head>
           <body>
             <h2>Converted Document: ${targetFile.name}</h2>
             <p>File Size: ${(targetFile.size / 1024).toFixed(1)} KB</p>
