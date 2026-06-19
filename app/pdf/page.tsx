@@ -216,56 +216,59 @@ export default function PdfTools() {
       } else if (mode === "to-image") {
         const targetFile = selectedFiles[0];
         const arrayBuffer = await targetFile.arrayBuffer();
-        const doc = await PDFDocument.load(arrayBuffer);
-        const pageCount = doc.getPageCount();
 
-        const canvas = document.createElement("canvas");
-        canvas.width = 600;
-        canvas.height = 800;
-        const ctx = canvas.getContext("2d");
-        if (ctx) {
-          ctx.fillStyle = "#ffffff";
-          ctx.fillRect(0, 0, 600, 800);
+        let dataUrl = "";
+        try {
+          const pdfjsLib = await new Promise<any>((resolve, reject) => {
+            if (typeof window !== "undefined" && (window as any).pdfjsLib) {
+              resolve((window as any).pdfjsLib);
+              return;
+            }
+            const script = document.createElement("script");
+            script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+            script.onload = () => {
+              (window as any).pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+              resolve((window as any).pdfjsLib);
+            };
+            script.onerror = () => reject(new Error("Failed to load PDF.js engine."));
+            document.head.appendChild(script);
+          });
+
+          const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+          const page = await pdf.getPage(1); // Render first page as JPG
           
-          ctx.strokeStyle = "#cbd5e1";
-          ctx.lineWidth = 10;
-          ctx.strokeRect(20, 20, 560, 760);
+          const viewport = page.getViewport({ scale: 2.0 }); // high-res crisp scaling
+          const canvas = document.createElement("canvas");
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          const ctx = canvas.getContext("2d");
 
-          ctx.fillStyle = "#ef4444";
-          ctx.fillRect(250, 100, 100, 120);
-          ctx.fillStyle = "#ffffff";
-          ctx.font = "bold 24px Arial";
-          ctx.fillText("PDF", 275, 170);
-
-          ctx.fillStyle = "#1e293b";
-          ctx.font = "bold 20px Arial";
-          ctx.fillText("Page 1 Preview", 230, 280);
-
-          ctx.font = "14px Arial";
-          ctx.fillText(`Source File: ${targetFile.name}`, 80, 340);
-          ctx.fillText(`File Size: ${(targetFile.size / 1024).toFixed(1)} KB`, 80, 370);
-          ctx.fillText(`Total Pages: ${pageCount}`, 80, 400);
-
-          ctx.fillStyle = "#64748b";
-          for (let i = 0; i < 8; i++) {
-            ctx.fillRect(80, 450 + (i * 35), 440, 12);
+          if (ctx) {
+            const renderContext = {
+              canvasContext: ctx,
+              viewport: viewport,
+            };
+            await page.render(renderContext).promise;
+            dataUrl = canvas.toDataURL("image/jpeg", 0.9);
+            setDownloadUrl(dataUrl);
           }
+        } catch (e) {
+          console.error("PDF to Image rendering failed:", e);
+          alert("Error rendering PDF to image. Please check if the file is secure or corrupted.");
         }
 
-        const dataUrl = canvas.toDataURL("image/jpeg");
-        setDownloadUrl(dataUrl);
+        if (dataUrl) {
+          const strLength = dataUrl.length - "data:image/jpeg;base64,".length;
+          const estSize = Math.round(strLength * 3 / 4);
 
-        // Estimate size
-        const strLength = dataUrl.length - "data:image/jpeg;base64,".length;
-        const estSize = Math.round(strLength * 3 / 4);
-
-        addHistoryItem({
-          fileName: `${targetFile.name.split(".")[0]}.jpg`,
-          fileSize: estSize,
-          toolType: "pdf-to-image",
-          status: "success",
-          downloadUrl: dataUrl,
-        });
+          addHistoryItem({
+            fileName: `${targetFile.name.split(".")[0]}.jpg`,
+            fileSize: estSize,
+            toolType: "pdf-to-image",
+            status: "success",
+            downloadUrl: dataUrl,
+          });
+        }
       }
     } catch (error) {
       console.error(error);
