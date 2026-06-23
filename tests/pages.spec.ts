@@ -124,10 +124,11 @@ test.describe("Home", () => {
     }
   });
 
-  test("Video & Audio card is flagged Coming Soon", async ({ page }) => {
+  test("Video & Audio is live (no Coming Soon badge)", async ({ page }) => {
     await page.goto("/");
     const card = page.locator("div").filter({ hasText: /^Video & Audio/ }).first();
-    await expect(card.getByText("Soon", { exact: true })).toBeVisible();
+    await expect(card.getByText("Soon", { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "Extract Audio", exact: true }).first()).toBeVisible();
   });
 });
 
@@ -183,24 +184,78 @@ test.describe("AI tools", () => {
     await page.getByRole("button", { name: "Document Translator" }).click();
     await page.locator(inputArea).fill("Hello world");
     await page.getByRole("button", { name: /Run AI translate/i }).click();
-    await expect(page.getByText(/Translation Preview/i)).toBeVisible();
+    // scope to the output panel — the engine banner also mentions "translation previews"
+    await expect(page.locator(".prose").getByText(/Translation Preview/i)).toBeVisible();
   });
 
   test("summarize button is disabled until a file is chosen", async ({ page }) => {
     await page.goto("/ai");
     await expect(page.getByRole("button", { name: /Run AI summarize/i })).toBeDisabled();
   });
+
+  test("Image OCR extracts text from an image on-device (Tesseract.js)", async ({ page }) => {
+    test.setTimeout(200000); // first run downloads the OCR model from CDN
+    await page.goto("/ai");
+    await page.getByRole("button", { name: "Image OCR" }).click();
+    // draw a clear text image and feed it to the dropzone's file input
+    await page.evaluate(async () => {
+      const c = document.createElement("canvas"); c.width = 640; c.height = 200;
+      const ctx = c.getContext("2d")!;
+      ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, 640, 200);
+      ctx.fillStyle = "#000000"; ctx.font = "bold 72px Arial";
+      ctx.fillText("HELLO WORLD", 30, 130);
+      const blob: Blob = await new Promise((r) => c.toBlob((b) => r(b!), "image/png"));
+      const file = new File([blob], "text.png", { type: "image/png" });
+      const dt = new DataTransfer(); dt.items.add(file);
+      const input = document.querySelector('input[type=file]') as HTMLInputElement;
+      input.files = dt.files;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await page.getByRole("button", { name: /Extract Text \(OCR\)/i }).click();
+    await page.getByText(/Extracted Text/i).waitFor({ timeout: 180000 });
+    const out = (await page.locator(".prose").innerText()).toUpperCase();
+    expect(out).toContain("HELLO");
+  });
 });
 
-// ───────────── Media (coming soon) ─────────────
-test.describe("Media", () => {
-  test("tabs switch and Coming Soon banner shows", async ({ page }) => {
+// ───────────── Media (FFmpeg WebAssembly) ─────────────
+function makeWav(seconds = 1, freq = 440, rate = 8000): Buffer {
+  const samples = seconds * rate, dataSize = samples * 2;
+  const buf = Buffer.alloc(44 + dataSize);
+  buf.write("RIFF", 0); buf.writeUInt32LE(36 + dataSize, 4); buf.write("WAVE", 8);
+  buf.write("fmt ", 12); buf.writeUInt32LE(16, 16); buf.writeUInt16LE(1, 20);
+  buf.writeUInt16LE(1, 22); buf.writeUInt32LE(rate, 24); buf.writeUInt32LE(rate * 2, 28);
+  buf.writeUInt16LE(2, 32); buf.writeUInt16LE(16, 34);
+  buf.write("data", 36); buf.writeUInt32LE(dataSize, 40);
+  for (let i = 0; i < samples; i++) buf.writeInt16LE(Math.round(Math.sin((2 * Math.PI * freq * i) / rate) * 30000), 44 + i * 2);
+  return buf;
+}
+
+test.describe("Media (FFmpeg)", () => {
+  test("tabs switch, engine banner + dropzone present (no more Coming Soon)", async ({ page }) => {
     await page.goto("/media");
-    await expect(page.getByText(/Coming Soon/i)).toBeVisible();
+    await expect(page.getByText(/Coming Soon/i)).toHaveCount(0);
+    await expect(page.getByText(/FFmpeg WebAssembly Engine/i)).toBeVisible();
+    await expect(page.locator('input[type=file]')).toHaveCount(1);
     await page.getByRole("button", { name: "Extract Audio" }).click();
     await page.getByRole("button", { name: "Audio Cutter" }).click();
-    // no upload dropzone is rendered in coming-soon state
-    await expect(page.locator('input[type=file]')).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Media Compressor" })).toBeVisible();
+  });
+
+  test("compresses a WAV to a real MP3 via FFmpeg.wasm", async ({ page }) => {
+    test.setTimeout(200000); // first run downloads the ~25MB engine from CDN
+    await page.goto("/media");
+    await page.locator('input[type=file]').setInputFiles({ name: "tone.wav", mimeType: "audio/wav", buffer: makeWav(1) });
+    await page.getByRole("button", { name: /Compress Media/i }).click();
+    const dl = page.getByRole("link", { name: /Download/i });
+    await dl.waitFor({ timeout: 180000 });
+    const href = await dl.getAttribute("href");
+    const info = await page.evaluate(async (url) => {
+      const r = await fetch(url!); const u = new Uint8Array(await r.arrayBuffer());
+      return { size: u.length, id3: u[0] === 0x49 && u[1] === 0x44 && u[2] === 0x33, frame: u[0] === 0xff && (u[1] & 0xe0) === 0xe0 };
+    }, href);
+    expect(info.size).toBeGreaterThan(0);
+    expect(info.id3 || info.frame).toBe(true); // valid MP3 bitstream
   });
 });
 

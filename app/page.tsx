@@ -28,8 +28,8 @@ export default function LandingPage() {
       title: "PDF Utilities",
       icon: FileText,
       color: "from-red-500/20 to-orange-500/20 text-red-500 border-red-500/30",
-      description: "Merge, split, rotate, protect, and convert PDF files to Word or JPG images directly in your browser.",
-      tools: ["Merge PDF", "Split PDF", "Rotate PDF", "PDF to JPG", "PDF to Word", "Protect PDF"],
+      description: "Merge, split, rotate, edit, and convert PDF files to Word, Excel, or JPG images directly in your browser.",
+      tools: ["Merge PDF", "Split PDF", "PDF to Word", "PDF to Excel", "PDF Editor", "Protect PDF"],
       path: "/pdf",
     },
     {
@@ -73,8 +73,8 @@ export default function LandingPage() {
       title: "AI Powerhouse",
       icon: Sparkles,
       color: "from-violet-500/20 to-fuchsia-500/20 text-violet-500 border-violet-500/30",
-      description: "Summarize PDF documents, translate text, and explain source code in a demo AI workspace.",
-      tools: ["AI Summarizer", "AI Code Explainer", "Document Translator"],
+      description: "Extract text from scanned PDFs and images with on-device OCR, summarize documents, explain code, and translate text.",
+      tools: ["AI Summarizer", "Image OCR", "AI Code Explainer", "Document Translator"],
       path: "/ai",
     },
     {
@@ -82,10 +82,9 @@ export default function LandingPage() {
       title: "Video & Audio",
       icon: Video,
       color: "from-cyan-500/20 to-sky-500/20 text-cyan-500 border-cyan-500/30",
-      description: "Video and audio tools — compress media, extract audio, and trim clips. Coming soon.",
-      tools: ["MP4 to GIF", "Video Compressor", "Extract Audio", "Audio Cutter"],
+      description: "Compress audio, extract MP3 from video, and trim clips locally with FFmpeg WebAssembly.",
+      tools: ["Compress Audio", "Extract Audio", "Audio Cutter"],
       path: "/media",
-      comingSoon: true,
     },
   ];
 
@@ -178,11 +177,6 @@ export default function LandingPage() {
                     <h3 className="text-lg font-bold text-slate-800 dark:text-slate-100">
                       {cat.title}
                     </h3>
-                    {cat.comingSoon && (
-                      <span className="text-[9px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/30">
-                        Soon
-                      </span>
-                    )}
                   </div>
 
                   {/* Description */}

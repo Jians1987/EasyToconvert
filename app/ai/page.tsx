@@ -4,9 +4,10 @@ import React, { useState } from "react";
 import ToolLayout from "@/components/ToolLayout";
 import Dropzone from "@/components/Dropzone";
 import { useConversions } from "@/app/providers";
-import { Sparkles, Star, BrainCircuit, Key, Send, FileText, Info } from "lucide-react";
+import { ocrImage, looksScanned } from "@/app/lib/ocr";
+import { Sparkles, Star, BrainCircuit, Key, Send, FileText, Info, ScanText } from "lucide-react";
 
-type AiMode = "summarize" | "explain" | "translate";
+type AiMode = "summarize" | "explain" | "translate" | "ocr";
 
 // Safe markdown-like renderer — no dangerouslySetInnerHTML, no XSS risk
 function SafeMarkdown({ text }: { text: string }) {
@@ -91,11 +92,14 @@ export default function AiTools() {
   const [processing, setProcessing] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [targetLang, setTargetLang] = useState("Spanish");
+  const [ocrProgress, setOcrProgress] = useState(0);
+  const [ocrStatus, setOcrStatus] = useState("");
   const { addHistoryItem, favorites, toggleFavorite } = useConversions();
 
   const handleFilesSelected = (files: File[]) => {
     if (files.length > 0) {
       setSelectedFile(files[0]);
+      setOutputText("");
     }
   };
 
@@ -120,6 +124,7 @@ export default function AiTools() {
         const numPages = pdf.numPages;
 
         let extractedText = "";
+        let ocrPagesUsed = 0;
         for (let i = 1; i <= numPages; i++) {
           const page = await pdf.getPage(i);
           const textContent = await page.getTextContent();
@@ -150,14 +155,46 @@ export default function AiTools() {
             }
           }
 
-          if (pageText.trim()) {
-            extractedText += `\n\n--- Page ${i} ---\n\n${pageText}`;
+          // Precise extraction: when a page has no selectable text it is a scanned
+          // image — render it and run on-device OCR instead of giving up.
+          if (looksScanned(pageText)) {
+            setOcrStatus(`Running OCR on scanned page ${i} of ${numPages}…`);
+            const viewport = page.getViewport({ scale: 2.0 });
+            const canvas = document.createElement("canvas");
+            canvas.width = viewport.width;
+            canvas.height = viewport.height;
+            const ctx = canvas.getContext("2d");
+            if (ctx) {
+              await page.render({ canvasContext: ctx, viewport }).promise;
+              const { text: ocrText, confidence } = await ocrImage(canvas, setOcrProgress);
+              if (ocrText.trim()) {
+                ocrPagesUsed++;
+                extractedText += `\n\n--- Page ${i} (OCR · ${confidence}% confidence) ---\n\n${ocrText}`;
+                continue;
+              }
+            }
+            extractedText += `\n\n--- Page ${i} ---\n\n[Scanned page — OCR found no readable text]`;
           } else {
-            extractedText += `\n\n--- Page ${i} ---\n\n[Scanned page — no selectable text found]`;
+            extractedText += `\n\n--- Page ${i} ---\n\n${pageText}`;
           }
         }
+        setOcrStatus("");
 
-        result = `### ⚡ Demo Mode — Real Text Extraction\n\n**File**: ${selectedFile.name}\n**Pages**: ${numPages}\n**Size**: ${(selectedFile.size / 1024).toFixed(1)} KB\n\nThe text below was extracted directly from your PDF using PDF.js. Connect a Gemini or OpenAI API key for AI-powered summarization.\n\n---\n${extractedText}`;
+        const ocrNote = ocrPagesUsed > 0
+          ? `\n\n**${ocrPagesUsed} scanned page${ocrPagesUsed > 1 ? "s were" : " was"} read with on-device OCR (Tesseract.js).**`
+          : "";
+        result = `### ⚡ Precise Text Extraction\n\n**File**: ${selectedFile.name}\n**Pages**: ${numPages}\n**Size**: ${(selectedFile.size / 1024).toFixed(1)} KB${ocrNote}\n\nSelectable text was extracted with PDF.js; scanned pages were recognized locally with OCR — no data left your browser.\n\n---\n${extractedText}`;
+
+      } else if (mode === "ocr") {
+        if (!selectedFile) {
+          setOutputText("Please upload an image first.");
+          setProcessing(false);
+          return;
+        }
+        setOcrStatus("Recognizing text…");
+        const { text: ocrText, confidence } = await ocrImage(selectedFile, setOcrProgress);
+        setOcrStatus("");
+        result = `### 🔎 Image OCR — Extracted Text\n\n**File**: ${selectedFile.name}\n**Confidence**: ${confidence}%\n**Engine**: Tesseract.js (on-device, private)\n\n---\n\n${ocrText || "_No readable text was found in this image._"}`;
 
       } else if (mode === "explain") {
         if (!inputText.trim()) {
@@ -198,6 +235,8 @@ export default function AiTools() {
       setOutputText(`### Error\n\nFailed to process: ${(e as Error).message || "Unknown error"}`);
     } finally {
       setProcessing(false);
+      setOcrStatus("");
+      setOcrProgress(0);
     }
   };
 
@@ -206,7 +245,7 @@ export default function AiTools() {
   return (
     <ToolLayout
       title="AI Productivity Suite"
-      description="Summarize PDF contracts, generate document translations, explain source codes, and extract text parameters."
+      description="Extract text from PDFs and images with on-device OCR, summarize documents, explain code, and translate text — privately in your browser."
       category="ai"
     >
       <div className="space-y-6">
@@ -215,6 +254,7 @@ export default function AiTools() {
           <div className="flex space-x-2">
             {[
               { id: "summarize", label: "AI PDF Summarizer" },
+              { id: "ocr", label: "Image OCR" },
               { id: "explain", label: "AI Code Explainer" },
               { id: "translate", label: "Document Translator" },
             ].map((t) => (
@@ -225,6 +265,8 @@ export default function AiTools() {
                   setOutputText("");
                   setSelectedFile(null);
                   setInputText("");
+                  setOcrStatus("");
+                  setOcrProgress(0);
                 }}
                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${
                   mode === t.id
@@ -254,8 +296,8 @@ export default function AiTools() {
         <div className="p-3 rounded-xl border border-indigo-500/20 bg-indigo-50/50 dark:bg-indigo-950/10 flex items-start space-x-2.5">
           <Info className="w-4 h-4 text-indigo-500 mt-0.5 flex-shrink-0" />
           <div className="text-xs text-indigo-700 dark:text-indigo-400 space-y-1">
-            <span className="font-bold block">Demo Mode — Real Data Extraction</span>
-            <span>The PDF Summarizer extracts real text from your documents. For AI-powered analysis, connect your Gemini or OpenAI API key below.</span>
+            <span className="font-bold block">Precise On-Device Extraction</span>
+            <span>The PDF Summarizer and Image OCR extract real text locally — scanned pages are recognized with Tesseract.js (WebAssembly OCR), so nothing leaves your browser. Summary/translation previews can optionally use your own API key below.</span>
           </div>
         </div>
 
@@ -292,6 +334,19 @@ export default function AiTools() {
                   multiple={false}
                   maxSizeMB={20}
                   title="Drop document for text extraction"
+                />
+              </div>
+            )}
+
+            {mode === "ocr" && (
+              <div className="space-y-2">
+                <label className="text-[10px] uppercase font-bold text-slate-400">Upload Image (PNG, JPG, scanned doc)</label>
+                <Dropzone
+                  onFilesSelected={handleFilesSelected}
+                  accept="image/*"
+                  multiple={false}
+                  maxSizeMB={20}
+                  title="Drop an image to extract its text"
                 />
               </div>
             )}
@@ -339,13 +394,31 @@ export default function AiTools() {
               </div>
             )}
 
+            {/* OCR progress */}
+            {processing && (mode === "summarize" || mode === "ocr") && ocrStatus && (
+              <div className="space-y-1.5">
+                <div className="flex justify-between text-[10px] text-slate-400">
+                  <span>{ocrStatus}</span>
+                  <span>{ocrProgress}%</span>
+                </div>
+                <div className="w-full bg-slate-200 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                  <div className="bg-indigo-500 h-full rounded-full transition-all" style={{ width: `${ocrProgress}%` }} />
+                </div>
+              </div>
+            )}
+
             <button
               onClick={executeAi}
-              disabled={processing || (mode === "summarize" && !selectedFile) || (mode !== "summarize" && !inputText)}
+              disabled={
+                processing ||
+                (mode === "summarize" && !selectedFile) ||
+                (mode === "ocr" && !selectedFile) ||
+                ((mode === "explain" || mode === "translate") && !inputText)
+              }
               className="w-full py-2.5 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50 transition-all flex items-center justify-center space-x-1.5"
             >
-              <BrainCircuit className="w-4 h-4 animate-pulse-slow" />
-              <span>{processing ? "Processing..." : `Run AI ${mode}`}</span>
+              {mode === "ocr" ? <ScanText className="w-4 h-4 animate-pulse-slow" /> : <BrainCircuit className="w-4 h-4 animate-pulse-slow" />}
+              <span>{processing ? "Processing..." : mode === "ocr" ? "Extract Text (OCR)" : `Run AI ${mode}`}</span>
             </button>
           </div>
 

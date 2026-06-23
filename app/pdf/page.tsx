@@ -4,11 +4,73 @@ import React, { useState } from "react";
 import ToolLayout from "@/components/ToolLayout";
 import Dropzone from "@/components/Dropzone";
 import { useConversions } from "@/app/providers";
+import { ocrImage } from "@/app/lib/ocr";
 import { PDFDocument, degrees, rgb, StandardFonts } from "pdf-lib";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, BorderStyle, ImageRun } from "docx";
-import { FileText, Star, AlertTriangle, Download, Image as ImageIcon, Type } from "lucide-react";
+import * as XLSX from "xlsx";
+import { FileText, Star, AlertTriangle, Download, Image as ImageIcon, Type, FileSpreadsheet } from "lucide-react";
 
-type PdfMode = "merge" | "split" | "rotate" | "protect" | "to-doc" | "to-image" | "edit";
+type PdfMode = "merge" | "split" | "rotate" | "protect" | "to-doc" | "to-image" | "edit" | "to-excel";
+
+interface TextItem {
+  str: string;
+  x: number;
+  y: number;
+}
+
+// Reconstruct a table grid (array of rows of cells) from positioned PDF text items
+// by clustering items into rows (similar Y) and columns (similar X).
+const reconstructTable = (items: TextItem[]): string[][] => {
+  const cleaned = items.filter((i) => i.str && i.str.trim());
+  if (cleaned.length === 0) return [];
+
+  // Group into rows (top → bottom) using a small Y tolerance.
+  const yTol = 4;
+  const byTop = [...cleaned].sort((a, b) => b.y - a.y);
+  const rows: { y: number; items: TextItem[] }[] = [];
+  for (const it of byTop) {
+    let row = rows.find((r) => Math.abs(r.y - it.y) <= yTol);
+    if (!row) {
+      row = { y: it.y, items: [] };
+      rows.push(row);
+    }
+    row.items.push(it);
+  }
+
+  // Derive column anchors from the left edges of every item.
+  const xTol = 12;
+  const anchors: number[] = [];
+  for (const x of cleaned.map((i) => i.x).sort((a, b) => a - b)) {
+    if (!anchors.some((a) => Math.abs(a - x) <= xTol)) anchors.push(x);
+  }
+  anchors.sort((a, b) => a - b);
+
+  // Place each item into its nearest column.
+  return rows.map((row) => {
+    const cells = new Array(anchors.length).fill("");
+    for (const it of [...row.items].sort((a, b) => a.x - b.x)) {
+      let ci = 0;
+      let best = Infinity;
+      anchors.forEach((a, idx) => {
+        const d = Math.abs(a - it.x);
+        if (d < best) {
+          best = d;
+          ci = idx;
+        }
+      });
+      cells[ci] = cells[ci] ? `${cells[ci]} ${it.str}` : it.str;
+    }
+    return cells;
+  });
+};
+
+// Crude table reconstruction from OCR plain text — split lines on runs of 2+ spaces.
+const tableFromOcrText = (text: string): string[][] =>
+  text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line.split(/\s{2,}/));
 
 // A piece of text the user has stamped onto a page in the editor.
 interface TextAnnotation {
@@ -446,19 +508,46 @@ export default function PdfTools() {
               }
 
               if (sortedItems.length === 0 || !sortedItems.some((item: any) => item.str?.trim())) {
-                paragraphs.push(
-                  new Paragraph({
-                    children: [
-                      new TextRun({
-                        text: "[Scanned page or no text elements found. Use Exact Layout mode or AI OCR tools.]",
-                        italics: true,
-                        color: "999999",
-                        size: 20,
-                      }),
-                    ],
-                    spacing: { after: 200 },
-                  })
-                );
+                // Scanned page — recognize text locally with OCR for precise extraction.
+                try {
+                  const viewport = page.getViewport({ scale: 2.0 });
+                  const canvas = document.createElement("canvas");
+                  canvas.width = viewport.width;
+                  canvas.height = viewport.height;
+                  const ctx = canvas.getContext("2d");
+                  let ocrText = "";
+                  if (ctx) {
+                    await page.render({ canvasContext: ctx, viewport }).promise;
+                    ocrText = (await ocrImage(canvas)).text;
+                  }
+                  if (ocrText.trim()) {
+                    ocrText.split("\n").forEach((line) => {
+                      if (line.trim()) {
+                        paragraphs.push(
+                          new Paragraph({
+                            children: [new TextRun({ text: line.trim(), size: 22 })],
+                            spacing: { after: 80 },
+                          })
+                        );
+                      }
+                    });
+                  } else {
+                    paragraphs.push(
+                      new Paragraph({
+                        children: [new TextRun({ text: "[Scanned page — OCR found no readable text]", italics: true, color: "999999", size: 20 })],
+                        spacing: { after: 200 },
+                      })
+                    );
+                  }
+                } catch (ocrErr) {
+                  console.error("OCR fallback failed:", ocrErr);
+                  paragraphs.push(
+                    new Paragraph({
+                      children: [new TextRun({ text: "[Scanned page — text could not be recognized]", italics: true, color: "999999", size: 20 })],
+                      spacing: { after: 200 },
+                    })
+                  );
+                }
               }
             }
           } catch (e) {
@@ -584,6 +673,59 @@ export default function PdfTools() {
           status: "success",
           downloadUrl: url,
         });
+      } else if (mode === "to-excel") {
+        const targetFile = selectedFiles[0];
+        const arrayBuffer = await targetFile.arrayBuffer();
+        const pdfjsLib = await loadPdfJs();
+        const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+        const numPages = pdf.numPages;
+
+        const wb = XLSX.utils.book_new();
+
+        for (let i = 1; i <= numPages; i++) {
+          const page = await pdf.getPage(i);
+          const textContent = await page.getTextContent();
+          const items: TextItem[] = textContent.items
+            .map((it: any) => ({ str: it.str, x: it.transform[4], y: it.transform[5] }))
+            .filter((it: TextItem) => it.str && it.str.trim());
+
+          let grid: string[][];
+          if (items.length > 0) {
+            grid = reconstructTable(items);
+          } else {
+            // Scanned page — OCR then reconstruct a rough grid from the recognized text.
+            const viewport = page.getViewport({ scale: 2.0 });
+            const canvas = document.createElement("canvas");
+            canvas.width = viewport.width;
+            canvas.height = viewport.height;
+            const ctx = canvas.getContext("2d");
+            let ocrText = "";
+            if (ctx) {
+              await page.render({ canvasContext: ctx, viewport }).promise;
+              ocrText = (await ocrImage(canvas)).text;
+            }
+            grid = tableFromOcrText(ocrText);
+          }
+
+          if (grid.length === 0) grid = [["(no tabular data detected on this page)"]];
+          const ws = XLSX.utils.aoa_to_sheet(grid);
+          XLSX.utils.book_append_sheet(wb, ws, `Page ${i}`.slice(0, 31));
+        }
+
+        const out = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+        const blob = new Blob([out], {
+          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        });
+        const url = URL.createObjectURL(blob);
+        setDownloadUrl(url);
+
+        addHistoryItem({
+          fileName: `${targetFile.name.split(".")[0]}.xlsx`,
+          fileSize: blob.size,
+          toolType: "pdf-to-excel",
+          status: "success",
+          downloadUrl: url,
+        });
       }
     } catch (error) {
       console.error(error);
@@ -611,6 +753,7 @@ export default function PdfTools() {
               { id: "rotate", label: "Rotate PDF" },
               { id: "protect", label: "Protect PDF" },
               { id: "to-doc", label: "PDF to Word" },
+              { id: "to-excel", label: "PDF to Excel" },
               { id: "to-image", label: "PDF to Image" },
               { id: "edit", label: "PDF Editor" },
             ].map((t) => (
@@ -659,6 +802,19 @@ export default function PdfTools() {
           </div>
         )}
 
+        {/* PDF to Excel info */}
+        {mode === "to-excel" && (
+          <div className="p-3.5 rounded-xl border border-emerald-500/30 bg-emerald-50/50 dark:bg-emerald-950/10 flex items-start space-x-2.5">
+            <FileSpreadsheet className="w-4 h-4 text-emerald-500 mt-0.5 flex-shrink-0" />
+            <div className="text-xs text-emerald-700 dark:text-emerald-400 space-y-1">
+              <span className="font-bold block">Smart Table Extraction → .xlsx</span>
+              <span>
+                Tables are reconstructed by clustering the PDF&apos;s text into rows and columns; scanned pages are read with on-device OCR. Each PDF page becomes a worksheet. Accuracy depends on the document — clean digital tables convert near-perfectly, while merged cells or complex layouts may need a quick review.
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* Dropzone selection */}
         <Dropzone
           onFilesSelected={handleFilesSelected}
@@ -670,6 +826,8 @@ export default function PdfTools() {
               ? "Drag & drop multiple PDFs to merge"
               : mode === "edit"
               ? "Drag & drop a PDF to edit"
+              : mode === "to-excel"
+              ? "Drag & drop a PDF with tables to extract"
               : "Drag & drop a PDF file to process"
           }
         />
@@ -827,6 +985,8 @@ export default function PdfTools() {
                   ? "Processing File..."
                   : mode === "edit"
                   ? "Apply Edits & Download"
+                  : mode === "to-excel"
+                  ? "Convert to Excel"
                   : `Apply PDF ${mode}`}
               </span>
             </button>
@@ -921,6 +1081,8 @@ export default function PdfTools() {
               <div className="p-2 rounded bg-emerald-500/10 text-emerald-500">
                 {mode === "to-image" ? (
                   <ImageIcon className="w-5 h-5" />
+                ) : mode === "to-excel" ? (
+                  <FileSpreadsheet className="w-5 h-5" />
                 ) : (
                   <FileText className="w-5 h-5" />
                 )}
@@ -941,6 +1103,8 @@ export default function PdfTools() {
                   ? `merged_${Date.now()}.pdf`
                   : mode === "to-doc"
                   ? `${selectedFiles[0]?.name.split(".")[0] || "document"}.docx`
+                  : mode === "to-excel"
+                  ? `${selectedFiles[0]?.name.split(".")[0] || "tables"}.xlsx`
                   : mode === "to-image"
                   ? `${selectedFiles[0]?.name.split(".")[0] || "preview"}_page1.jpg`
                   : mode === "edit"
@@ -949,7 +1113,7 @@ export default function PdfTools() {
               }
               className="px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-500 hover:bg-emerald-600 text-white transition-all shadow-sm"
             >
-              Download {mode === "to-doc" ? ".docx" : mode === "to-image" ? "Page 1" : "File"}
+              Download {mode === "to-doc" ? ".docx" : mode === "to-excel" ? ".xlsx" : mode === "to-image" ? "Page 1" : "File"}
             </a>
           </div>
         )}

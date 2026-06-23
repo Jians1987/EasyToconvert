@@ -84,10 +84,11 @@ test.describe("Edge: navbar quick search", () => {
 
 // ── 'Coming soon' & safety messaging ──
 test.describe("Edge: messaging & safety", () => {
-  test("Media page shows Coming Soon and no upload dropzone (exploratory fix)", async ({ page }) => {
+  test("Media page exposes the working FFmpeg tools (engine banner + dropzone)", async ({ page }) => {
     await page.goto("/media");
-    await expect(page.getByText(/Coming Soon/i)).toBeVisible();
-    await expect(page.locator('input[type=file]')).toHaveCount(0);
+    await expect(page.getByText(/Coming Soon/i)).toHaveCount(0);
+    await expect(page.getByText(/FFmpeg WebAssembly Engine/i)).toBeVisible();
+    await expect(page.locator('input[type=file]')).toHaveCount(1);
   });
 
   test("PDF Protect shows the no-encryption warning and a text (not password) field", async ({ page }) => {
