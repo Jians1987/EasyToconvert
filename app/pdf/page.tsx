@@ -8,7 +8,58 @@ import { ocrImage } from "@/app/lib/ocr";
 import { PDFDocument, degrees, rgb, StandardFonts } from "pdf-lib";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, BorderStyle, ImageRun } from "docx";
 import * as XLSX from "xlsx";
-import { FileText, Star, AlertTriangle, Download, Image as ImageIcon, Type, FileSpreadsheet } from "lucide-react";
+import { FileText, Star, AlertTriangle, Download, Image as ImageIcon, Type, FileSpreadsheet, Sparkles } from "lucide-react";
+
+// Cloud-AI table extraction (opt-in). Sends a page image to Claude (vision) and
+// returns a reconstructed grid. Calls the Messages API directly from the browser
+// with the user's own key (no backend; the official SDK can't be bundled client-side).
+const extractTableWithClaude = async (apiKey: string, pngBase64: string): Promise<string[][]> => {
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
+    body: JSON.stringify({
+      model: "claude-opus-4-8",
+      max_tokens: 16000,
+      thinking: { type: "adaptive" },
+      system:
+        "You extract tables from page images into a JSON grid with maximum accuracy. Preserve the original row and column structure and reading order. Use an empty string for blank cells. Never invent or omit data. Respond with JSON only.",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "image", source: { type: "base64", media_type: "image/png", data: pngBase64 } },
+            {
+              type: "text",
+              text:
+                'Extract all tabular data on this page as one combined grid. Respond with ONLY a JSON object of the form {"rows": [["cell", ...], ...]} and no other text.',
+            },
+          ],
+        },
+      ],
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Anthropic API ${res.status}: ${errText.slice(0, 200)}`);
+  }
+
+  const data = await res.json();
+  const textBlock = (data.content || []).find((b: any) => b.type === "text");
+  const raw = (textBlock?.text ?? "").trim();
+  const stripped = raw.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+  const start = stripped.indexOf("{");
+  const end = stripped.lastIndexOf("}");
+  const slice = start >= 0 && end >= 0 ? stripped.slice(start, end + 1) : stripped;
+  const parsed = JSON.parse(slice);
+  const rows = Array.isArray(parsed?.rows) ? parsed.rows : [];
+  return rows.map((r: any) => (Array.isArray(r) ? r.map((c: any) => String(c ?? "")) : [String(r ?? "")]));
+};
 
 type PdfMode = "merge" | "split" | "rotate" | "protect" | "to-doc" | "to-image" | "edit" | "to-excel";
 
@@ -132,6 +183,8 @@ export default function PdfTools() {
   const [splitPages, setSplitPages] = useState("1");
   const [totalPages, setTotalPages] = useState(0);
   const [docFidelity, setDocFidelity] = useState<"layout" | "text">("layout");
+  const [cloudEnhance, setCloudEnhance] = useState(false);
+  const [cloudApiKey, setCloudApiKey] = useState("");
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [imagePages, setImagePages] = useState<{ url: string; page: number }[]>([]);
 
@@ -681,6 +734,25 @@ export default function PdfTools() {
         const numPages = pdf.numPages;
 
         const wb = XLSX.utils.book_new();
+        const useCloud = cloudEnhance && cloudApiKey.trim().length > 0;
+        let cloudFailures = 0;
+
+        // Render a page to a PNG canvas (reused for cloud AI and OCR fallback).
+        const renderPage = async (page: any) => {
+          const viewport = page.getViewport({ scale: 2.0 });
+          const canvas = document.createElement("canvas");
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          const ctx = canvas.getContext("2d");
+          if (ctx) await page.render({ canvasContext: ctx, viewport }).promise;
+          return canvas;
+        };
+
+        const onDeviceGrid = async (page: any, items: TextItem[]) => {
+          if (items.length > 0) return reconstructTable(items);
+          const canvas = await renderPage(page);
+          return tableFromOcrText((await ocrImage(canvas)).text);
+        };
 
         for (let i = 1; i <= numPages; i++) {
           const page = await pdf.getPage(i);
@@ -690,26 +762,30 @@ export default function PdfTools() {
             .filter((it: TextItem) => it.str && it.str.trim());
 
           let grid: string[][];
-          if (items.length > 0) {
-            grid = reconstructTable(items);
-          } else {
-            // Scanned page — OCR then reconstruct a rough grid from the recognized text.
-            const viewport = page.getViewport({ scale: 2.0 });
-            const canvas = document.createElement("canvas");
-            canvas.width = viewport.width;
-            canvas.height = viewport.height;
-            const ctx = canvas.getContext("2d");
-            let ocrText = "";
-            if (ctx) {
-              await page.render({ canvasContext: ctx, viewport }).promise;
-              ocrText = (await ocrImage(canvas)).text;
+          if (useCloud) {
+            try {
+              const canvas = await renderPage(page);
+              const b64 = canvas.toDataURL("image/png").split(",")[1] || "";
+              grid = await extractTableWithClaude(cloudApiKey.trim(), b64);
+              if (grid.length === 0) grid = await onDeviceGrid(page, items);
+            } catch (e) {
+              console.error(`Cloud AI extraction failed on page ${i}, using on-device:`, e);
+              cloudFailures++;
+              grid = await onDeviceGrid(page, items);
             }
-            grid = tableFromOcrText(ocrText);
+          } else {
+            grid = await onDeviceGrid(page, items);
           }
 
           if (grid.length === 0) grid = [["(no tabular data detected on this page)"]];
           const ws = XLSX.utils.aoa_to_sheet(grid);
           XLSX.utils.book_append_sheet(wb, ws, `Page ${i}`.slice(0, 31));
+        }
+
+        if (useCloud && cloudFailures === numPages) {
+          alert("Cloud AI extraction failed for every page (check your API key, billing, and connection). Used on-device extraction instead.");
+        } else if (useCloud && cloudFailures > 0) {
+          alert(`Cloud AI extraction failed on ${cloudFailures} of ${numPages} page(s); those pages used on-device extraction.`);
         }
 
         const out = XLSX.write(wb, { type: "array", bookType: "xlsx" });
@@ -812,6 +888,37 @@ export default function PdfTools() {
                 Tables are reconstructed by clustering the PDF&apos;s text into rows and columns; scanned pages are read with on-device OCR. Each PDF page becomes a worksheet. Accuracy depends on the document — clean digital tables convert near-perfectly, while merged cells or complex layouts may need a quick review.
               </span>
             </div>
+          </div>
+        )}
+
+        {/* Optional cloud-AI enhancement for messy/scanned tables */}
+        {mode === "to-excel" && (
+          <div className="space-y-2.5 max-w-xl">
+            <label className="flex items-center space-x-2 text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer">
+              <input
+                type="checkbox"
+                className="rounded text-indigo-500 focus:ring-indigo-500/50"
+                checked={cloudEnhance}
+                onChange={(e) => setCloudEnhance(e.target.checked)}
+              />
+              <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
+              <span>Enhance with cloud AI (Claude) — for messy or scanned tables</span>
+            </label>
+            {cloudEnhance && (
+              <div className="space-y-2 p-3 rounded-xl border border-amber-500/30 bg-amber-50/50 dark:bg-amber-950/10">
+                <p className="text-[11px] text-amber-700 dark:text-amber-400 leading-relaxed">
+                  ⚠ This sends each page <strong>image to Anthropic&apos;s API</strong> to maximize table accuracy — your document leaves your browser. You must supply your <strong>own Anthropic API key</strong> (usage is billed to you). The key is used only in your browser for this conversion and is never stored.
+                </p>
+                <input
+                  type="password"
+                  placeholder="Anthropic API key (sk-ant-...)"
+                  className="w-full glass-input text-xs"
+                  value={cloudApiKey}
+                  onChange={(e) => setCloudApiKey(e.target.value)}
+                  autoComplete="off"
+                />
+              </div>
+            )}
           </div>
         )}
 
@@ -976,7 +1083,8 @@ export default function PdfTools() {
               disabled={
                 processing ||
                 (mode === "protect" && !pdfPassword) ||
-                (mode === "edit" && annotations.length === 0)
+                (mode === "edit" && annotations.length === 0) ||
+                (mode === "to-excel" && cloudEnhance && !cloudApiKey.trim())
               }
               className="px-6 py-2.5 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50 transition-all flex items-center space-x-1.5 shadow-md"
             >

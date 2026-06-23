@@ -354,6 +354,36 @@ test.describe("PDF modes", () => {
     expect(grid).toEqual([["Name", "Age"], ["Alice", "30"]]);
   });
 
+  test("PDF to Excel cloud-AI path shapes the request and uses the AI grid (stubbed)", async ({ page }) => {
+    // Stub the Anthropic endpoint — no real key or network needed
+    await page.route("https://api.anthropic.com/**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ content: [{ type: "text", text: '{"rows":[["Name","Total"],["Alice","42"]]}' }] }),
+      });
+    });
+    await page.goto("/pdf");
+    const doc = await PDFDocument.create();
+    const font = await doc.embedFont(StandardFonts.Helvetica);
+    const pg = doc.addPage([300, 200]);
+    pg.drawText("X", { x: 50, y: 150, size: 12, font }); // on-device would yield a different grid
+    const buf = Buffer.from(await doc.save());
+
+    await page.getByRole("button", { name: "PDF to Excel" }).click();
+    await page.getByRole("checkbox").check();
+    await page.getByPlaceholder(/Anthropic API key/i).fill("sk-ant-test");
+    await page.locator('input[type=file]').setInputFiles({ name: "t.pdf", mimeType: "application/pdf", buffer: buf });
+    await page.getByRole("button", { name: /Convert to Excel/i }).click();
+    const dl = page.getByRole("link", { name: /Download \.xlsx/i });
+    await dl.waitFor({ timeout: 20000 });
+    const href = await dl.getAttribute("href");
+    const arr = await page.evaluate(async (u) => Array.from(new Uint8Array(await (await fetch(u!)).arrayBuffer())), href);
+    const wb = XLSX.read(Buffer.from(arr), { type: "buffer" });
+    const grid = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
+    expect(grid).toEqual([["Name", "Total"], ["Alice", "42"]]); // the AI rows, not on-device "X"
+  });
+
   test("PDF Editor stamps text and produces a download", async ({ page }) => {
     await page.goto("/pdf");
     await page.getByRole("button", { name: "PDF Editor" }).click();
