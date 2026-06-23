@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, StandardFonts } from "pdf-lib";
+import * as XLSX from "xlsx";
 
 const PNG_1x1 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
@@ -326,6 +327,31 @@ test.describe("PDF modes", () => {
     await page.locator('input[type=file]').setInputFiles({ name: "s.pdf", mimeType: "application/pdf", buffer: await pdf(3) });
     await page.getByRole("button", { name: /Apply PDF split/i }).click();
     await expect(page.getByRole("link", { name: /Download File/i })).toBeVisible({ timeout: 15000 });
+  });
+
+  test("PDF to Excel extracts a positioned table into a real .xlsx", async ({ page }) => {
+    await page.goto("/pdf");
+    const doc = await PDFDocument.create();
+    const font = await doc.embedFont(StandardFonts.Helvetica);
+    const pg = doc.addPage([420, 760]);
+    const rows: [string, number][][] = [
+      [["Name", 50], ["Age", 200]],
+      [["Alice", 50], ["30", 200]],
+    ];
+    let y = 700;
+    for (const r of rows) { for (const [t, x] of r) pg.drawText(t, { x, y, size: 12, font }); y -= 22; }
+    const buf = Buffer.from(await doc.save());
+
+    await page.getByRole("button", { name: "PDF to Excel" }).click();
+    await page.locator('input[type=file]').setInputFiles({ name: "t.pdf", mimeType: "application/pdf", buffer: buf });
+    await page.getByRole("button", { name: /Convert to Excel/i }).click();
+    const dl = page.getByRole("link", { name: /Download \.xlsx/i });
+    await dl.waitFor({ timeout: 20000 });
+    const href = await dl.getAttribute("href");
+    const arr = await page.evaluate(async (url) => Array.from(new Uint8Array(await (await fetch(url!)).arrayBuffer())), href);
+    const wb = XLSX.read(Buffer.from(arr), { type: "buffer" });
+    const grid = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
+    expect(grid).toEqual([["Name", "Age"], ["Alice", "30"]]);
   });
 
   test("PDF Editor stamps text and produces a download", async ({ page }) => {
