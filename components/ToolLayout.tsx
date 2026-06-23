@@ -81,7 +81,7 @@ export default function ToolLayout({
             <div className="space-y-1">
               <span className="font-semibold text-slate-700 dark:text-slate-300">Need help?</span>
               <p className="leading-normal">
-                Files are processed securely. Feel free to join our Pro subscription for unlimited size, API keys access, and parallel queues.
+                All files are processed securely in your browser. No data is sent to external servers. All tools are completely free with no limits.
               </p>
             </div>
           </div>

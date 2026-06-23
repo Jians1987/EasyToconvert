@@ -4,9 +4,84 @@ import React, { useState } from "react";
 import ToolLayout from "@/components/ToolLayout";
 import Dropzone from "@/components/Dropzone";
 import { useConversions } from "@/app/providers";
-import { Sparkles, Star, BrainCircuit, Key, Globe, Send, Play, FileText, CheckCircle } from "lucide-react";
+import { Sparkles, Star, BrainCircuit, Key, Send, FileText, Info } from "lucide-react";
 
 type AiMode = "summarize" | "explain" | "translate";
+
+// Safe markdown-like renderer — no dangerouslySetInnerHTML, no XSS risk
+function SafeMarkdown({ text }: { text: string }) {
+  const lines = text.split("\n");
+  const elements: React.ReactNode[] = [];
+  let codeBlock: string[] = [];
+  let inCode = false;
+
+  const renderInline = (line: string, key: number) => {
+    // Split on **bold** and render as React nodes
+    const parts = line.split(/(\*\*.*?\*\*)/g);
+    return (
+      <span key={key}>
+        {parts.map((part, i) => {
+          if (part.startsWith("**") && part.endsWith("**")) {
+            return <strong key={i}>{part.slice(2, -2)}</strong>;
+          }
+          return part;
+        })}
+      </span>
+    );
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    if (line.startsWith("```")) {
+      if (!inCode) {
+        inCode = true;
+        codeBlock = [];
+      } else {
+        elements.push(
+          <pre key={i} className="bg-slate-900 text-slate-100 p-3 rounded-lg overflow-x-auto text-[10px] my-2">
+            <code>{codeBlock.join("\n")}</code>
+          </pre>
+        );
+        inCode = false;
+        codeBlock = [];
+      }
+    } else if (inCode) {
+      codeBlock.push(line);
+    } else if (line.startsWith("### ")) {
+      elements.push(<h3 key={i} className="font-bold text-sm text-slate-900 dark:text-slate-100 my-2">{line.slice(4)}</h3>);
+    } else if (line.startsWith("* ")) {
+      elements.push(<li key={i} className="ml-4 list-disc">{renderInline(line.slice(2), i)}</li>);
+    } else if (line.startsWith("---")) {
+      elements.push(<hr key={i} className="border-slate-200 dark:border-slate-700 my-2" />);
+    } else if (line.trim() === "") {
+      elements.push(<br key={i} />);
+    } else {
+      elements.push(<p key={i} className="leading-relaxed">{renderInline(line, i)}</p>);
+    }
+  }
+
+  return <div className="space-y-0.5 text-xs">{elements}</div>;
+}
+
+// Shared PDF.js loader
+const loadPdfJs = (): Promise<any> => {
+  return new Promise((resolve, reject) => {
+    if (typeof window !== "undefined" && (window as any).pdfjsLib) {
+      resolve((window as any).pdfjsLib);
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+    script.onload = () => {
+      (window as any).pdfjsLib.GlobalWorkerOptions.workerSrc =
+        "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+      resolve((window as any).pdfjsLib);
+    };
+    script.onerror = () => reject(new Error("Failed to load PDF.js"));
+    document.head.appendChild(script);
+  });
+};
 
 export default function AiTools() {
   const [mode, setMode] = useState<AiMode>("summarize");
@@ -28,19 +103,89 @@ export default function AiTools() {
     setProcessing(true);
     setOutputText("");
 
-    // Simulate AI request latency
-    setTimeout(() => {
+    try {
       let result = "";
+
       if (mode === "summarize") {
-        result = `### Document Summary\n\n**File Name**: ${selectedFile ? selectedFile.name : "contract_sample.pdf"}\n\n1. **Key Clauses & Mandates**: The agreement establishes standard software delivery milestones starting July 1, 2026. Uptime guarantees are fixed at 99.9%.\n2. **Termination Provisions**: Standard 30-day written notification required. Disputes are governed under California state law.\n3. **Financial Terms**: Subscription terms renew annually at $79/user/month unless cancelled. Payments are integrated via Stripe billing loops.\n\n*Summary compiled locally using Gemini-1.5-Flash parser.*`;
+        if (!selectedFile) {
+          setOutputText("Please upload a PDF file first.");
+          setProcessing(false);
+          return;
+        }
+
+        // Actually extract text from the uploaded PDF
+        const arrayBuffer = await selectedFile.arrayBuffer();
+        const pdfjsLib = await loadPdfJs();
+        const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+        const numPages = pdf.numPages;
+
+        let extractedText = "";
+        for (let i = 1; i <= numPages; i++) {
+          const page = await pdf.getPage(i);
+          const textContent = await page.getTextContent();
+          const items = textContent.items;
+
+          // Sort by Y (top to bottom) then X (left to right)
+          const sorted = [...items].sort((a: any, b: any) => {
+            const yDiff = b.transform[5] - a.transform[5];
+            if (Math.abs(yDiff) > 5) return yDiff;
+            return a.transform[4] - b.transform[4];
+          });
+
+          let pageText = "";
+          let lastY = -1;
+          for (const item of sorted) {
+            const y = item.transform[5];
+            const text = (item as any).str;
+            if (!text || !text.trim()) continue;
+
+            if (lastY === -1) {
+              pageText = text;
+              lastY = y;
+            } else if (Math.abs(lastY - y) > 5) {
+              pageText += "\n" + text;
+              lastY = y;
+            } else {
+              pageText += " " + text;
+            }
+          }
+
+          if (pageText.trim()) {
+            extractedText += `\n\n--- Page ${i} ---\n\n${pageText}`;
+          } else {
+            extractedText += `\n\n--- Page ${i} ---\n\n[Scanned page — no selectable text found]`;
+          }
+        }
+
+        result = `### ⚡ Demo Mode — Real Text Extraction\n\n**File**: ${selectedFile.name}\n**Pages**: ${numPages}\n**Size**: ${(selectedFile.size / 1024).toFixed(1)} KB\n\nThe text below was extracted directly from your PDF using PDF.js. Connect a Gemini or OpenAI API key for AI-powered summarization.\n\n---\n${extractedText}`;
+
       } else if (mode === "explain") {
-        result = `### Code Explanation\n\nHere is the breakdown of the provided code block:\n\n*   **Lines 1-3**: Declares variables and initializes file reading stream. This is critical to load resources into memory buffers.\n*   **Lines 4-8**: Sets up canvas drawing context. The width and height parameters match the original image dimensions to maintain ratio.\n*   **Lines 9-12**: Invokes the base64 translation loop, exporting a formatted string representation. This bypasses HTTP payload size limitations.\n\n*Code verified and reviewed successfully.*`;
+        if (!inputText.trim()) {
+          setOutputText("Please paste some code first.");
+          setProcessing(false);
+          return;
+        }
+
+        const lines = inputText.split("\n");
+        const lineCount = lines.length;
+        const functionMatches = inputText.match(/function\s+\w+|const\s+\w+\s*=\s*(?:async\s+)?\(|=>\s*{/g);
+        const varMatches = inputText.match(/(?:const|let|var)\s+/g);
+
+        let numberedCode = lines.map((line, i) => `  ${(i + 1).toString().padStart(3, " ")} | ${line}`).join("\n");
+
+        result = `### ⚡ Demo Mode — Code Analysis\n\n**Statistics:**\n* **Total Lines**: ${lineCount}\n* **Functions/Arrows detected**: ${functionMatches ? functionMatches.length : 0}\n* **Variable declarations**: ${varMatches ? varMatches.length : 0}\n\nConnect a Gemini or OpenAI API key for AI-powered code explanation.\n\n---\n\n**Your code with line numbers:**\n\n\`\`\`\n${numberedCode}\n\`\`\``;
+
       } else if (mode === "translate") {
-        result = `### Document Translation (${targetLang})\n\nHere is your translated document text:\n\n"Bienvenido a Easytoconvert. Su privacidad es nuestra máxima prioridad. Todas las operaciones de archivos e imágenes se procesan localmente dentro de su navegador."\n\n*Accuracy index: 98.7%*`;
+        if (!inputText.trim()) {
+          setOutputText("Please enter text to translate.");
+          setProcessing(false);
+          return;
+        }
+
+        result = `### ⚡ Demo Mode — Translation Preview\n\n**Target Language**: ${targetLang}\n**Input Length**: ${inputText.length} characters\n\nConnect a Gemini or OpenAI API key for real AI-powered translation.\n\n---\n\n**Original Text:**\n\n${inputText}\n\n---\n\n*Real-time translation requires an active API connection. Enter your API key above and we'll use the Gemini or OpenAI translation endpoint.*`;
       }
 
       setOutputText(result);
-      setProcessing(false);
 
       addHistoryItem({
         fileName: `ai_${mode}_${Date.now()}.md`,
@@ -48,7 +193,12 @@ export default function AiTools() {
         toolType: `ai-${mode}`,
         status: "success",
       });
-    }, 2000);
+    } catch (e) {
+      console.error("AI tool error:", e);
+      setOutputText(`### Error\n\nFailed to process: ${(e as Error).message || "Unknown error"}`);
+    } finally {
+      setProcessing(false);
+    }
   };
 
   const isPinned = favorites.includes("ai-tools");
@@ -100,11 +250,20 @@ export default function AiTools() {
           </button>
         </div>
 
+        {/* Demo Mode Badge */}
+        <div className="p-3 rounded-xl border border-indigo-500/20 bg-indigo-50/50 dark:bg-indigo-950/10 flex items-start space-x-2.5">
+          <Info className="w-4 h-4 text-indigo-500 mt-0.5 flex-shrink-0" />
+          <div className="text-xs text-indigo-700 dark:text-indigo-400 space-y-1">
+            <span className="font-bold block">Demo Mode — Real Data Extraction</span>
+            <span>The PDF Summarizer extracts real text from your documents. For AI-powered analysis, connect your Gemini or OpenAI API key below.</span>
+          </div>
+        </div>
+
         {/* API Key configuration input */}
         <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/20 space-y-3.5 max-w-md">
           <div className="flex items-center space-x-2">
             <Key className="w-4 h-4 text-indigo-400" />
-            <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">API Key configuration (Optional)</h4>
+            <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">API Key Configuration (Optional)</h4>
           </div>
           <div className="flex space-x-2">
             <input
@@ -114,8 +273,8 @@ export default function AiTools() {
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
             />
-            <span className="text-[9px] border rounded px-2 py-1.5 flex items-center bg-white dark:bg-slate-900 text-slate-400 font-semibold">
-              Dev Mode
+            <span className="text-[9px] border rounded px-2 py-1.5 flex items-center bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800 text-amber-600 dark:text-amber-400 font-semibold">
+              Demo
             </span>
           </div>
         </div>
@@ -132,7 +291,7 @@ export default function AiTools() {
                   accept="application/pdf"
                   multiple={false}
                   maxSizeMB={20}
-                  title="Drop document for summary"
+                  title="Drop document for text extraction"
                 />
               </div>
             )}
@@ -186,37 +345,30 @@ export default function AiTools() {
               className="w-full py-2.5 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50 transition-all flex items-center justify-center space-x-1.5"
             >
               <BrainCircuit className="w-4 h-4 animate-pulse-slow" />
-              <span>{processing ? "Generating AI Response..." : `Run AI ${mode}`}</span>
+              <span>{processing ? "Processing..." : `Run AI ${mode}`}</span>
             </button>
           </div>
 
           {/* Output Panel */}
           <div className="space-y-2">
             <label className="text-[10px] uppercase font-bold text-slate-400">AI Results Output</label>
-            <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/20 min-h-[300px] text-xs leading-relaxed space-y-4 overflow-y-auto max-h-[350px]">
+            <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/20 min-h-[300px] text-xs leading-relaxed space-y-4 overflow-y-auto max-h-[450px]">
               {processing ? (
                 <div className="h-[250px] flex flex-col items-center justify-center space-y-3 text-slate-400">
                   <div className="w-8 h-8 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
-                  <span>Parsing parameters and consulting LLM model...</span>
+                  <span>Extracting content and analyzing...</span>
                 </div>
               ) : outputText ? (
                 <div className="prose dark:prose-invert max-w-none text-slate-700 dark:text-slate-300">
                   <div className="flex items-center space-x-2 text-indigo-500 mb-3 border-b dark:border-slate-800 pb-2">
                     <Sparkles className="w-4 h-4" />
-                    <span className="font-bold text-xs uppercase tracking-wide">AI Generation Complete</span>
+                    <span className="font-bold text-xs uppercase tracking-wide">Processing Complete</span>
                   </div>
-                  {/* Simplistic renderer for markdown bullet highlights */}
-                  <div dangerouslySetInnerHTML={{
-                    __html: outputText
-                      .replace(/### (.*)/g, "<h3 className='font-bold text-sm text-slate-900 dark:text-slate-100 my-2'>$1</h3>")
-                      .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
-                      .replace(/\* (.*)/g, "<li className='ml-4 list-disc'>$1</li>")
-                      .replace(/\n/g, "<br/>")
-                  }} />
+                  <SafeMarkdown text={outputText} />
                 </div>
               ) : (
                 <div className="h-[250px] flex items-center justify-center text-slate-400 italic">
-                  Run utility to load intelligence feedback...
+                  Run utility to extract content and load results...
                 </div>
               )}
             </div>

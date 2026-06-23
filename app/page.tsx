@@ -28,7 +28,7 @@ export default function LandingPage() {
       title: "PDF Utilities",
       icon: FileText,
       color: "from-red-500/20 to-orange-500/20 text-red-500 border-red-500/30",
-      description: "Merge, split, rotate, convert PDF files to Word, Excel, JPG, or PNG directly in browser.",
+      description: "Merge, split, rotate, protect, and convert PDF files to Word or JPG images directly in your browser.",
       tools: ["Merge PDF", "Split PDF", "Rotate PDF", "PDF to JPG", "PDF to Word", "Protect PDF"],
       path: "/pdf",
     },
@@ -37,8 +37,8 @@ export default function LandingPage() {
       title: "Image Studio",
       icon: ImageIcon,
       color: "from-blue-500/20 to-indigo-500/20 text-blue-500 border-blue-500/30",
-      description: "Compress, resize, remove background, convert PNG to JPG, WebP, SVG, and HEIC.",
-      tools: ["PNG to JPG", "Compress Image", "Background Remover", "Resize Image", "SVG to PNG"],
+      description: "Compress, resize, read metadata, and convert PNG to JPG, WebP, and SVG formats.",
+      tools: ["PNG to JPG", "Compress Image", "Image Metadata", "Resize Image", "SVG to PNG"],
       path: "/image",
     },
     {
@@ -46,8 +46,8 @@ export default function LandingPage() {
       title: "Data Converters",
       icon: Database,
       color: "from-emerald-500/20 to-teal-500/20 text-emerald-500 border-emerald-500/30",
-      description: "JSON and XML formatting, minifying, validation, and JSON to CSV/YAML conversion.",
-      tools: ["JSON Formatter", "CSV to JSON", "XML to JSON", "JSON to YAML", "JSON Diff Checker"],
+      description: "JSON formatting, minifying, validation, plus CSV, XML, and YAML conversion.",
+      tools: ["JSON Formatter", "CSV to JSON", "XML to JSON", "JSON to YAML", "JSON Minifier"],
       path: "/data",
     },
     {
@@ -55,8 +55,8 @@ export default function LandingPage() {
       title: "Developer Core",
       icon: Code,
       color: "from-purple-500/20 to-pink-500/20 text-purple-500 border-purple-500/30",
-      description: "Base64 & URL encoding, JWT decoder, GUID/UUID generators, and password builders.",
-      tools: ["Base64 Encode", "JWT Decoder", "UUID Generator", "QR Code", "Hash Generator"],
+      description: "Base64 & URL encoding, UUID generators, password builders, and QR code makers.",
+      tools: ["Base64 Encode", "URL Encoder", "UUID Generator", "QR Code", "Password Maker"],
       path: "/developer",
     },
     {
@@ -64,8 +64,8 @@ export default function LandingPage() {
       title: "JS & HTML/CSS",
       icon: Code,
       color: "from-amber-500/20 to-yellow-500/20 text-amber-500 border-amber-500/30",
-      description: "Code formatting, minification, obfuscator, CSS gradient and box shadow generator.",
-      tools: ["JS Minifier", "HTML Beautifier", "CSS Minifier", "CSS Gradient Generator"],
+      description: "Minify JS, HTML & CSS, beautify HTML, and generate CSS gradients and box shadows.",
+      tools: ["JS Minifier", "HTML Beautifier", "CSS Minifier", "CSS Gradient Generator", "Box Shadow"],
       path: "/javascript",
     },
     {
@@ -73,8 +73,8 @@ export default function LandingPage() {
       title: "AI Powerhouse",
       icon: Sparkles,
       color: "from-violet-500/20 to-fuchsia-500/20 text-violet-500 border-violet-500/30",
-      description: "Summarize PDF documents, translate text, explain code, and parse contracts using AI.",
-      tools: ["AI Summarizer", "AI Code Explainer", "AI OCR Extractor", "AI Resume Analyzer"],
+      description: "Summarize PDF documents, translate text, and explain source code in a demo AI workspace.",
+      tools: ["AI Summarizer", "AI Code Explainer", "Document Translator"],
       path: "/ai",
     },
     {
@@ -82,9 +82,10 @@ export default function LandingPage() {
       title: "Video & Audio",
       icon: Video,
       color: "from-cyan-500/20 to-sky-500/20 text-cyan-500 border-cyan-500/30",
-      description: "Compress videos, extract audios from video files, convert MP4 to GIF, and WAV to MP3.",
+      description: "Video and audio tools — compress media, extract audio, and trim clips. Coming soon.",
       tools: ["MP4 to GIF", "Video Compressor", "Extract Audio", "Audio Cutter"],
       path: "/media",
+      comingSoon: true,
     },
   ];
 
@@ -154,6 +155,12 @@ export default function LandingPage() {
           </p>
         </div>
 
+        {searchQuery && filteredCategories.length === 0 && (
+          <div className="text-center py-10 text-slate-400 text-sm">
+            No tools found for &ldquo;{searchQuery}&rdquo;. Try a different keyword.
+          </div>
+        )}
+
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredCategories.map((cat) => {
             const Icon = cat.icon;
@@ -171,6 +178,11 @@ export default function LandingPage() {
                     <h3 className="text-lg font-bold text-slate-800 dark:text-slate-100">
                       {cat.title}
                     </h3>
+                    {cat.comingSoon && (
+                      <span className="text-[9px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/30">
+                        Soon
+                      </span>
+                    )}
                   </div>
 
                   {/* Description */}
@@ -181,12 +193,13 @@ export default function LandingPage() {
                   {/* List of Key Tools */}
                   <div className="flex flex-wrap gap-1.5 pt-2">
                     {cat.tools.map((tool) => (
-                      <span
+                      <Link
                         key={tool}
+                        href={cat.path}
                         className="text-[10px] bg-slate-100 hover:bg-slate-200 dark:bg-slate-800/80 dark:hover:bg-slate-800 border border-slate-200/50 dark:border-slate-700/50 rounded-full px-2.5 py-0.5 text-slate-600 dark:text-slate-300 font-medium transition-colors cursor-pointer"
                       >
                         {tool}
-                      </span>
+                      </Link>
                     ))}
                   </div>
                 </div>

@@ -12,6 +12,7 @@ export default function Blog() {
       date: "June 12, 2026",
       readTime: "5 min read",
       category: "Image Studio",
+      href: "/image",
     },
     {
       title: "Why Client-side PDF Compositions are Safer for Enterprises",
@@ -19,6 +20,7 @@ export default function Blog() {
       date: "May 28, 2026",
       readTime: "8 min read",
       category: "PDF Suite",
+      href: "/pdf",
     },
     {
       title: "Data Serialization Formats: JSON, XML, YAML, and CSV",
@@ -26,6 +28,7 @@ export default function Blog() {
       date: "May 15, 2026",
       readTime: "6 min read",
       category: "Developer Hub",
+      href: "/data",
     },
   ];
 
@@ -66,10 +69,10 @@ export default function Blog() {
                   <span>{post.readTime}</span>
                 </span>
               </div>
-              <button className="text-xs font-bold text-indigo-500 flex items-center space-x-1 hover:underline">
+              <Link href={post.href} className="text-xs font-bold text-indigo-500 flex items-center space-x-1 hover:underline">
                 <span>Read Article</span>
                 <ChevronRight className="w-3 h-3" />
-              </button>
+              </Link>
             </div>
           </div>
         ))}

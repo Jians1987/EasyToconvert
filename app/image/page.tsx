@@ -13,11 +13,11 @@ export default function ImageTools() {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [processing, setProcessing] = useState(false);
   const [targetFormat, setTargetFormat] = useState("image/webp");
-  const [quality, setQuality] = useState(80); // 1-100
+  const [quality, setQuality] = useState(80);
   const [resizeWidth, setResizeWidth] = useState(800);
   const [resizeHeight, setResizeHeight] = useState(600);
   const [maintainAspect, setMaintainAspect] = useState(true);
-  const [originalDimensions, setOriginalDimensions] = useState<{w: number, h: number} | null>(null);
+  const [originalDimensions, setOriginalDimensions] = useState<{ w: number; h: number } | null>(null);
   const [metadata, setMetadata] = useState<{ [key: string]: string } | null>(null);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const { addHistoryItem, favorites, toggleFavorite } = useConversions();
@@ -27,25 +27,38 @@ export default function ImageTools() {
     setDownloadUrl(null);
     setMetadata(null);
 
-    // Read metadata and original dimensions
     if (files.length > 0) {
       const file = files[0];
-      setMetadata({
-        "File Name": file.name,
-        "File Size": (file.size / 1024).toFixed(1) + " KB",
-        "Mime Type": file.type,
-        "Last Modified": new Date(file.lastModified).toLocaleDateString(),
-      });
 
-      // Read original image dimensions
-      const imgEl = new window.Image();
-      imgEl.onload = () => {
-        setOriginalDimensions({ w: imgEl.width, h: imgEl.height });
-        setResizeWidth(imgEl.width);
-        setResizeHeight(imgEl.height);
-        URL.revokeObjectURL(imgEl.src);
+      // Read image dimensions for aspect ratio support
+      const img = new Image();
+      img.onload = () => {
+        setOriginalDimensions({ w: img.width, h: img.height });
+        setResizeWidth(img.width);
+        setResizeHeight(img.height);
+        setMetadata({
+          "File Name": file.name,
+          "File Size": (file.size / 1024).toFixed(1) + " KB",
+          "Mime Type": file.type,
+          "Dimensions": `${img.width} × ${img.height} px`,
+          "Last Modified": new Date(file.lastModified).toLocaleDateString(),
+        });
       };
-      imgEl.src = URL.createObjectURL(file);
+      img.src = URL.createObjectURL(file);
+    }
+  };
+
+  const handleWidthChange = (newWidth: number) => {
+    setResizeWidth(newWidth);
+    if (maintainAspect && originalDimensions && originalDimensions.w > 0) {
+      setResizeHeight(Math.round(newWidth * (originalDimensions.h / originalDimensions.w)));
+    }
+  };
+
+  const handleHeightChange = (newHeight: number) => {
+    setResizeHeight(newHeight);
+    if (maintainAspect && originalDimensions && originalDimensions.h > 0) {
+      setResizeWidth(Math.round(newHeight * (originalDimensions.w / originalDimensions.h)));
     }
   };
 
@@ -55,10 +68,20 @@ export default function ImageTools() {
     setDownloadUrl(null);
 
     const file = selectedFiles[0];
+
+    // Validate resize dimensions
+    if (mode === "resize") {
+      if (resizeWidth <= 0 || resizeHeight <= 0) {
+        alert("Width and height must be greater than 0.");
+        setProcessing(false);
+        return;
+      }
+    }
+
     const reader = new FileReader();
 
     reader.onload = (e) => {
-      const img = new window.Image();
+      const img = new Image();
       img.onload = () => {
         const canvas = document.createElement("canvas");
         const ctx = canvas.getContext("2d");
@@ -77,19 +100,20 @@ export default function ImageTools() {
         if (ctx) {
           ctx.drawImage(img, 0, 0, w, h);
 
-          // Get image formats and compressions
-          const mime = mode === "convert" ? targetFormat : file.type;
+          // Use target format for convert, keep original format for compress/resize
+          const mime = mode === "convert" ? targetFormat : file.type || "image/png";
           const q = quality / 100;
 
           const dataUrl = canvas.toDataURL(mime, q);
           setDownloadUrl(dataUrl);
 
-          // Parse estimated size
-          const strLength = dataUrl.length - (dataUrl.indexOf(',') + 1);
-          const estSize = Math.round(strLength * 3 / 4);
+          const strLength = dataUrl.length - (dataUrl.indexOf(",") + 1);
+          const estSize = Math.round((strLength * 3) / 4);
+
+          const outputExt = mime.split("/")[1] || "png";
 
           addHistoryItem({
-            fileName: `processed_${file.name.split(".")[0]}.${mime.split("/")[1]}`,
+            fileName: `processed_${file.name.split(".")[0]}.${outputExt}`,
             fileSize: estSize,
             toolType: `image-${mode}`,
             status: "success",
@@ -98,9 +122,24 @@ export default function ImageTools() {
         }
         setProcessing(false);
       };
+      img.onerror = () => {
+        alert("Failed to load the image. The file may be corrupt or unsupported.");
+        setProcessing(false);
+      };
       img.src = e.target?.result as string;
     };
+    reader.onerror = () => {
+      alert("Failed to read the file. Please try again.");
+      setProcessing(false);
+    };
     reader.readAsDataURL(file);
+  };
+
+  // Determine the correct file extension for the download
+  const getDownloadExtension = () => {
+    if (mode === "convert") return targetFormat.split("/")[1] || "png";
+    if (selectedFiles.length > 0) return selectedFiles[0].type.split("/")[1] || "png";
+    return "png";
   };
 
   const isPinned = favorites.includes("image-tools");
@@ -191,7 +230,7 @@ export default function ImageTools() {
             )}
 
             {mode === "resize" && (
-              <div className="space-y-3 max-w-xs">
+              <div className="space-y-3 max-w-md">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold text-slate-400">Width (px)</label>
@@ -199,13 +238,7 @@ export default function ImageTools() {
                       type="number"
                       className="w-full glass-input text-xs"
                       value={resizeWidth}
-                      onChange={(e) => {
-                        const newW = Number(e.target.value);
-                        setResizeWidth(newW);
-                        if (maintainAspect && originalDimensions && originalDimensions.w > 0) {
-                          setResizeHeight(Math.round(newW * (originalDimensions.h / originalDimensions.w)));
-                        }
-                      }}
+                      onChange={(e) => handleWidthChange(Number(e.target.value))}
                     />
                   </div>
                   <div className="space-y-1">
@@ -214,24 +247,23 @@ export default function ImageTools() {
                       type="number"
                       className="w-full glass-input text-xs"
                       value={resizeHeight}
-                      onChange={(e) => {
-                        const newH = Number(e.target.value);
-                        setResizeHeight(newH);
-                        if (maintainAspect && originalDimensions && originalDimensions.h > 0) {
-                          setResizeWidth(Math.round(newH * (originalDimensions.w / originalDimensions.h)));
-                        }
-                      }}
+                      onChange={(e) => handleHeightChange(Number(e.target.value))}
                     />
                   </div>
                 </div>
-                <label className="flex items-center space-x-2 cursor-pointer">
+                <label className="flex items-center space-x-2 text-xs text-slate-600 dark:text-slate-300 cursor-pointer">
                   <input
                     type="checkbox"
+                    className="rounded text-indigo-500 focus:ring-indigo-500/50"
                     checked={maintainAspect}
                     onChange={(e) => setMaintainAspect(e.target.checked)}
-                    className="accent-indigo-500"
                   />
-                  <span className="text-xs text-slate-500 dark:text-slate-400">Maintain Aspect Ratio</span>
+                  <span>Maintain aspect ratio</span>
+                  {originalDimensions && (
+                    <span className="text-[10px] text-slate-400">
+                      (Original: {originalDimensions.w} × {originalDimensions.h})
+                    </span>
+                  )}
                 </label>
               </div>
             )}
@@ -277,7 +309,7 @@ export default function ImageTools() {
             </div>
             <a
               href={downloadUrl}
-              download={`processed_${Date.now()}.${mode === "convert" ? (targetFormat.split("/")[1] || "png") : (selectedFiles[0]?.type.split("/")[1] || "png")}`}
+              download={`processed_${Date.now()}.${getDownloadExtension()}`}
               className="px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-500 hover:bg-emerald-600 text-white transition-all shadow-sm"
             >
               Download Image

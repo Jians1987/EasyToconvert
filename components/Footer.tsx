@@ -49,7 +49,7 @@ export default function Footer() {
               </li>
               <li>
                 <Link href="/pdf" className="text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-all">
-                  Rotate & Reorder PDF
+                  Rotate PDF
                 </Link>
               </li>
               <li>
@@ -64,7 +64,7 @@ export default function Footer() {
               </li>
               <li>
                 <Link href="/image" className="text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-all">
-                  Background Remover
+                  Image Metadata Viewer
                 </Link>
               </li>
             </ul>
@@ -76,7 +76,7 @@ export default function Footer() {
             <ul className="space-y-2 text-xs">
               <li>
                 <Link href="/data" className="text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-all">
-                  JSON Formatter & Tree
+                  JSON Formatter
                 </Link>
               </li>
               <li>

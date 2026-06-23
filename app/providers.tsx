@@ -34,8 +34,22 @@ export function Providers({ children }: { children: React.ReactNode }) {
   // Theme State
   const [theme, setTheme] = useState<Theme>("dark");
 
+  // localStorage can throw in private-browsing mode (Safari) or when full.
+  const safeSetItem = (key: string, value: string) => {
+    try {
+      localStorage.setItem(key, value);
+    } catch (e) {
+      console.warn(`Unable to persist ${key}.`, e);
+    }
+  };
+
   useEffect(() => {
-    const savedTheme = localStorage.getItem("theme") as Theme;
+    let savedTheme: Theme | null = null;
+    try {
+      savedTheme = localStorage.getItem("theme") as Theme;
+    } catch {
+      savedTheme = null;
+    }
     if (savedTheme) {
       setTheme(savedTheme);
       if (savedTheme === "dark") {
@@ -46,14 +60,14 @@ export function Providers({ children }: { children: React.ReactNode }) {
     } else {
       // Default to dark mode for premium feel
       document.documentElement.classList.add("dark");
-      localStorage.setItem("theme", "dark");
+      safeSetItem("theme", "dark");
     }
   }, []);
 
   const toggleTheme = () => {
     const nextTheme = theme === "dark" ? "light" : "dark";
     setTheme(nextTheme);
-    localStorage.setItem("theme", nextTheme);
+    safeSetItem("theme", nextTheme);
     if (nextTheme === "dark") {
       document.documentElement.classList.add("dark");
     } else {
@@ -66,16 +80,20 @@ export function Providers({ children }: { children: React.ReactNode }) {
   const [favorites, setFavorites] = useState<string[]>([]);
 
   useEffect(() => {
-    const savedHistory = localStorage.getItem("conversion_history");
-    if (savedHistory) {
-      try {
-        setHistory(JSON.parse(savedHistory));
-      } catch (e) {
-        console.error("Failed to parse history", e);
-      }
+    try {
+      const savedHistory = localStorage.getItem("conversion_history");
+      if (savedHistory) setHistory(JSON.parse(savedHistory));
+    } catch (e) {
+      console.error("Failed to load history", e);
     }
 
-    const savedFavorites = localStorage.getItem("tool_favorites");
+    const savedFavorites = (() => {
+      try {
+        return localStorage.getItem("tool_favorites");
+      } catch {
+        return null;
+      }
+    })();
     if (savedFavorites) {
       try {
         setFavorites(JSON.parse(savedFavorites));
@@ -85,6 +103,22 @@ export function Providers({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  // Persist history without crashing when localStorage quota is exceeded.
+  // Conversions can store large base64 data URLs in `downloadUrl`; if the full
+  // write fails we retry with metadata only (dropping the heavy data URLs).
+  const persistHistory = (items: ConversionHistoryItem[]) => {
+    try {
+      localStorage.setItem("conversion_history", JSON.stringify(items));
+    } catch {
+      try {
+        const slim = items.map(({ downloadUrl, ...rest }) => rest);
+        localStorage.setItem("conversion_history", JSON.stringify(slim));
+      } catch (e) {
+        console.warn("Unable to persist conversion history (storage quota exceeded).", e);
+      }
+    }
+  };
+
   const addHistoryItem = (item: Omit<ConversionHistoryItem, "id" | "timestamp">) => {
     const newItem: ConversionHistoryItem = {
       ...item,
@@ -93,7 +127,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
     };
     setHistory((prev) => {
       const updated = [newItem, ...prev].slice(0, 100); // limit to 100 entries
-      localStorage.setItem("conversion_history", JSON.stringify(updated));
+      persistHistory(updated);
       return updated;
     });
   };
@@ -108,7 +142,11 @@ export function Providers({ children }: { children: React.ReactNode }) {
       const updated = prev.includes(toolId)
         ? prev.filter((id) => id !== toolId)
         : [...prev, toolId];
-      localStorage.setItem("tool_favorites", JSON.stringify(updated));
+      try {
+        localStorage.setItem("tool_favorites", JSON.stringify(updated));
+      } catch (e) {
+        console.warn("Unable to persist favorites.", e);
+      }
       return updated;
     });
   };

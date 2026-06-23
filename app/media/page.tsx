@@ -1,37 +1,26 @@
 "use client";
 
-import React, { useState, useRef } from "react";
+import React, { useState } from "react";
 import ToolLayout from "@/components/ToolLayout";
 import Dropzone from "@/components/Dropzone";
 import { useConversions } from "@/app/providers";
-import { Video, Music, Star } from "lucide-react";
+import { Video, Music, Star, AlertTriangle } from "lucide-react";
 
 type MediaMode = "compress" | "extract" | "audio-trim";
 
 export default function MediaTools() {
   const [mode, setMode] = useState<MediaMode>("compress");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [processing, setProcessing] = useState(false);
-  const [targetBitrate, setTargetBitrate] = useState(128); // kbps
+  const [targetBitrate, setTargetBitrate] = useState(128);
   const [audioFormat, setAudioFormat] = useState("audio/mp3");
   const [trimStart, setTrimStart] = useState(0);
   const [trimEnd, setTrimEnd] = useState(10);
-  const [playing, setPlaying] = useState(false);
-  const [comingSoon, setComingSoon] = useState(false);
-
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const audioBufferRef = useRef<AudioBuffer | null>(null);
-  const { addHistoryItem, favorites, toggleFavorite } = useConversions();
+  const { favorites, toggleFavorite } = useConversions();
 
   const handleFilesSelected = (files: File[]) => {
     if (files.length > 0) {
       setSelectedFile(files[0]);
-      setPlaying(false);
     }
-  };
-
-  const processMedia = () => {
-    setComingSoon(true);
   };
 
   const isPinned = favorites.includes("media-tools");
@@ -55,7 +44,6 @@ export default function MediaTools() {
                 key={t.id}
                 onClick={() => {
                   setMode(t.id as MediaMode);
-                  setComingSoon(false);
                   setSelectedFile(null);
                 }}
                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${
@@ -82,35 +70,27 @@ export default function MediaTools() {
           </button>
         </div>
 
-        {/* Dropzone */}
-        <Dropzone
-          onFilesSelected={handleFilesSelected}
-          accept={mode === "audio-trim" ? "audio/*" : "video/*,audio/*"}
-          multiple={false}
-          maxSizeMB={100}
-          title={
-            mode === "audio-trim" ? "Upload an audio file to trim" : "Upload media (MP4, AVI, MP3, WAV)"
-          }
-        />
-
         {/* Coming Soon Banner */}
-        {comingSoon && (
-          <div className="p-4 rounded-xl border border-amber-400/30 bg-amber-50 dark:bg-amber-900/20 text-center space-y-2">
-            <p className="text-sm font-semibold text-amber-700 dark:text-amber-300">
-              🚧 Coming Soon
-            </p>
-            <p className="text-xs text-amber-600 dark:text-amber-400 max-w-lg mx-auto">
-              Browser-based media processing requires FFmpeg WebAssembly integration which is coming soon. For now, try our working PDF, Image, Data, and Developer tools!
-            </p>
+        <div className="p-5 rounded-xl border border-amber-500/30 bg-amber-50/50 dark:bg-amber-950/10 space-y-3">
+          <div className="flex items-start space-x-3">
+            <AlertTriangle className="w-5 h-5 text-amber-500 mt-0.5 flex-shrink-0" />
+            <div className="space-y-2">
+              <h4 className="text-sm font-bold text-amber-700 dark:text-amber-400">
+                Coming Soon — FFmpeg WebAssembly Integration
+              </h4>
+              <p className="text-xs text-amber-600 dark:text-amber-400/80 leading-relaxed">
+                Browser-based video and audio processing requires FFmpeg compiled to WebAssembly, which is currently being integrated.
+                In the meantime, explore our fully working <a href="/pdf" className="underline font-semibold">PDF tools</a>, <a href="/image" className="underline font-semibold">Image tools</a>, <a href="/data" className="underline font-semibold">Data converters</a>, and <a href="/developer" className="underline font-semibold">Developer utilities</a>.
+              </p>
+            </div>
           </div>
-        )}
+        </div>
 
-        {/* Media configurations */}
+        {/* Media configurations (shown but disabled — FFmpeg not yet available) */}
         {selectedFile && (
-          <div className="space-y-4 pt-2">
+          <div className="space-y-4 pt-2 opacity-60 pointer-events-none">
             {mode === "compress" && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-xl">
-                {/* Sliders */}
                 <div className="space-y-3.5 p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white/40 dark:bg-slate-900/30">
                   <div className="flex justify-between items-center text-xs">
                     <span>Target Audio Bitrate</span>
@@ -131,7 +111,6 @@ export default function MediaTools() {
                   </div>
                 </div>
 
-                {/* Target Format */}
                 <div className="space-y-3 p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white/40 dark:bg-slate-900/30 flex flex-col justify-center">
                   <label className="text-[10px] uppercase font-bold text-slate-400">Export format</label>
                   <select
@@ -149,16 +128,8 @@ export default function MediaTools() {
             {mode === "audio-trim" && (
               <div className="space-y-4 p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white/40 dark:bg-slate-900/30 max-w-xl">
                 <div className="flex items-center space-x-3 text-xs">
-                  <button
-                    onClick={() => setPlaying(!playing)}
-                    className="p-2 rounded-full bg-indigo-500 text-white hover:bg-indigo-600"
-                  >
-                    {playing ? <Music className="w-4 h-4" /> : <Video className="w-4 h-4" />}
-                  </button>
                   <span className="font-mono text-slate-500 truncate max-w-xs">{selectedFile.name}</span>
                 </div>
-
-                {/* Timeline Sliders */}
                 <div className="grid grid-cols-2 gap-4 text-xs">
                   <div className="space-y-1">
                     <span>Start Trim (s)</span>
@@ -181,19 +152,19 @@ export default function MediaTools() {
                 </div>
               </div>
             )}
-
-            {/* Action button */}
-            <button
-              onClick={processMedia}
-              disabled={true}
-              className="px-6 py-2.5 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50 transition-all flex items-center space-x-1.5 shadow-md cursor-not-allowed"
-            >
-              <span>Coming Soon</span>
-            </button>
           </div>
         )}
 
-
+        {/* Disabled Action Button */}
+        {selectedFile && (
+          <button
+            disabled
+            className="px-6 py-2.5 rounded-lg text-xs font-semibold bg-slate-400 text-white cursor-not-allowed transition-all flex items-center space-x-1.5 shadow-md"
+          >
+            <AlertTriangle className="w-3.5 h-3.5" />
+            <span>Coming Soon — Requires FFmpeg WASM</span>
+          </button>
+        )}
       </div>
     </ToolLayout>
   );

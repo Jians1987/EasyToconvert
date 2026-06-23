@@ -61,7 +61,7 @@ export default function Contact() {
               <CheckCircle className="w-12 h-12 text-emerald-500 animate-bounce" />
               <div>
                 <h3 className="font-bold text-slate-800 dark:text-slate-100">Message Received!</h3>
-                <p className="text-xs text-slate-550 text-slate-500 dark:text-slate-400 mt-1 max-w-xs">
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-xs">
                   Thank you for reaching out. We will read your feedback and contact you shortly.
                 </p>
               </div>

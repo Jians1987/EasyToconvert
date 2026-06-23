@@ -54,11 +54,12 @@ export default function JavascriptTools() {
     if (!inputText.trim()) return;
     let minified = "";
     if (codeType === "js" || codeType === "css") {
-      // Basic minify - remove comments, newlines and extra spaces
+      // Basic minify — remove comments and collapse whitespace only around safe structural chars
       minified = inputText
-        .replace(/\/\*[\s\S]*?\*\/|([^\\:]|^)\/\/.*$/gm, "$1") // comments
-        .replace(/\s+/g, " ")
-        .replace(/\s*([\{\}\:\;\,\(\)\=\+\-\*\/])\s*/g, "$1")
+        .replace(/\/\*[\s\S]*?\*\/|([^\\:]|^)\/\/.*$/gm, "$1") // strip block & line comments
+        .replace(/\s+/g, " ")                                    // collapse whitespace
+        .replace(/\s*([{};,])\s*/g, "$1")                       // safe: braces, semicolons, commas
+        .replace(/\s*:\s*/g, ":")                                // colon (CSS properties / object keys)
         .trim();
     } else {
       // HTML minify

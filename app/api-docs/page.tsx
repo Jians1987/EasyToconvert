@@ -105,7 +105,7 @@ print(response.json())`
                     <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-500/10 text-indigo-500">
                       {ep.method}
                     </span>
-                    <span className="font-mono text-xs font-bold text-slate-850 dark:text-slate-250">
+                    <span className="font-mono text-xs font-bold text-slate-800 dark:text-slate-200">
                       {ep.path}
                     </span>
                   </div>
@@ -173,7 +173,7 @@ print(response.json())`
               </pre>
               <button
                 onClick={copyCode}
-                className="absolute top-2.5 right-2.5 p-1.5 rounded-lg bg-slate-800 hover:bg-slate-750 text-slate-400 hover:text-white transition-all border border-slate-700"
+                className="absolute top-2.5 right-2.5 p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-all border border-slate-700"
               >
                 {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
               </button>

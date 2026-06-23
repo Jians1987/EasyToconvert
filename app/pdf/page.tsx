@@ -4,10 +4,62 @@ import React, { useState } from "react";
 import ToolLayout from "@/components/ToolLayout";
 import Dropzone from "@/components/Dropzone";
 import { useConversions } from "@/app/providers";
-import { PDFDocument, degrees } from "pdf-lib";
-import { FileText, Plus, Shield, RotateCw, Columns, Trash, Star, Settings } from "lucide-react";
+import { PDFDocument, degrees, rgb, StandardFonts } from "pdf-lib";
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, BorderStyle, ImageRun } from "docx";
+import { FileText, Star, AlertTriangle, Download, Image as ImageIcon, Type } from "lucide-react";
 
-type PdfMode = "merge" | "split" | "rotate" | "protect" | "to-doc" | "to-image";
+type PdfMode = "merge" | "split" | "rotate" | "protect" | "to-doc" | "to-image" | "edit";
+
+// A piece of text the user has stamped onto a page in the editor.
+interface TextAnnotation {
+  id: string;
+  page: number; // 1-indexed
+  xRatio: number; // 0..1 across page width
+  yRatio: number; // 0..1 down from page top
+  text: string;
+  size: number;
+  color: string; // hex
+}
+
+// Shared PDF.js loader to avoid duplicate code
+const loadPdfJs = (): Promise<any> => {
+  return new Promise((resolve, reject) => {
+    if (typeof window !== "undefined" && (window as any).pdfjsLib) {
+      resolve((window as any).pdfjsLib);
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+    script.onload = () => {
+      (window as any).pdfjsLib.GlobalWorkerOptions.workerSrc =
+        "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+      resolve((window as any).pdfjsLib);
+    };
+    script.onerror = () => reject(new Error("Failed to load PDF.js engine."));
+    document.head.appendChild(script);
+  });
+};
+
+// Convert "#rrggbb" into 0..1 channel values for pdf-lib's rgb().
+const hexToUnit = (hex: string) => {
+  const h = hex.replace("#", "");
+  return {
+    r: (parseInt(h.substring(0, 2), 16) || 0) / 255,
+    g: (parseInt(h.substring(2, 4), 16) || 0) / 255,
+    b: (parseInt(h.substring(4, 6), 16) || 0) / 255,
+  };
+};
+
+// Decode a "data:image/png;base64,...." URL into raw bytes for docx embedding
+const dataUrlToUint8Array = (dataUrl: string): Uint8Array => {
+  const base64 = dataUrl.substring(dataUrl.indexOf(",") + 1);
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+};
 
 export default function PdfTools() {
   const [mode, setMode] = useState<PdfMode>("merge");
@@ -15,18 +67,120 @@ export default function PdfTools() {
   const [processing, setProcessing] = useState(false);
   const [pdfPassword, setPdfPassword] = useState("");
   const [rotateAngle, setRotateAngle] = useState(90);
+  const [splitPages, setSplitPages] = useState("1");
+  const [totalPages, setTotalPages] = useState(0);
+  const [docFidelity, setDocFidelity] = useState<"layout" | "text">("layout");
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+  const [imagePages, setImagePages] = useState<{ url: string; page: number }[]>([]);
+
+  // PDF Editor state
+  const [annotations, setAnnotations] = useState<TextAnnotation[]>([]);
+  const [editText, setEditText] = useState("Sample text");
+  const [editSize, setEditSize] = useState(24);
+  const [editColor, setEditColor] = useState("#e11d48");
+
   const { addHistoryItem, favorites, toggleFavorite } = useConversions();
 
-  const handleFilesSelected = (files: File[]) => {
+  const handleFilesSelected = async (files: File[]) => {
     setSelectedFiles(files);
     setDownloadUrl(null);
+    setImagePages([]);
+    setAnnotations([]);
+
+    // If split mode, read page count immediately
+    if (files.length > 0 && (mode === "split" || mode === "to-image")) {
+      try {
+        const arrayBuffer = await files[0].arrayBuffer();
+        const doc = await PDFDocument.load(arrayBuffer);
+        const count = doc.getPageCount();
+        setTotalPages(count);
+        setSplitPages(`1-${count}`);
+      } catch {
+        setTotalPages(0);
+      }
+    }
+
+    // In editor mode, render page previews immediately so the user can click to place text
+    if (files.length > 0 && mode === "edit") {
+      try {
+        const arrayBuffer = await files[0].arrayBuffer();
+        const pdfjsLib = await loadPdfJs();
+        const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+        const rendered: { url: string; page: number }[] = [];
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const viewport = page.getViewport({ scale: 1.5 });
+          const canvas = document.createElement("canvas");
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          const ctx = canvas.getContext("2d");
+          if (ctx) {
+            await page.render({ canvasContext: ctx, viewport }).promise;
+            rendered.push({ url: canvas.toDataURL("image/jpeg", 0.85), page: i });
+          }
+        }
+        setImagePages(rendered);
+        setTotalPages(pdf.numPages);
+      } catch (e) {
+        console.error("Editor preview rendering failed:", e);
+        alert("Could not render the PDF for editing. Check your connection (the render engine loads from a CDN) or try another file.");
+      }
+    }
+  };
+
+  const addAnnotation = (pageNum: number, e: React.MouseEvent<HTMLImageElement>) => {
+    if (!editText.trim()) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const xRatio = (e.clientX - rect.left) / rect.width;
+    const yRatio = (e.clientY - rect.top) / rect.height;
+    setAnnotations((prev) => [
+      ...prev,
+      {
+        id: Math.random().toString(36).substring(2, 9),
+        page: pageNum,
+        xRatio,
+        yRatio,
+        text: editText,
+        size: editSize,
+        color: editColor,
+      },
+    ]);
+  };
+
+  const removeAnnotation = (id: string) => {
+    setAnnotations((prev) => prev.filter((a) => a.id !== id));
+  };
+
+  // Parse page range string like "1-3, 5, 7-9" into array of 0-indexed page numbers
+  const parsePageRange = (rangeStr: string, maxPages: number): number[] => {
+    const pages: Set<number> = new Set();
+    const parts = rangeStr.split(",").map((s) => s.trim());
+    for (const part of parts) {
+      if (part.includes("-")) {
+        const [startStr, endStr] = part.split("-").map((s) => s.trim());
+        const startNum = parseInt(startStr);
+        const endNum = parseInt(endStr);
+        if (isNaN(startNum) || isNaN(endNum)) continue; // skip invalid ranges
+        const start = Math.max(1, startNum);
+        const end = Math.min(maxPages, endNum);
+        for (let i = start; i <= end; i++) {
+          pages.add(i - 1); // 0-indexed
+        }
+      } else {
+        const num = parseInt(part);
+        if (!isNaN(num) && num >= 1 && num <= maxPages) {
+          pages.add(num - 1);
+        }
+      }
+    }
+    return Array.from(pages).sort((a, b) => a - b);
   };
 
   const processPdf = async () => {
     if (selectedFiles.length === 0) return;
     setProcessing(true);
     setDownloadUrl(null);
+    setImagePages([]);
 
     try {
       if (mode === "merge") {
@@ -38,7 +192,7 @@ export default function PdfTools() {
           copiedPages.forEach((page) => mergedPdf.addPage(page));
         }
         const pdfBytes = await mergedPdf.save();
-        const blob = new Blob([pdfBytes], { type: "application/pdf" });
+        const blob = new Blob([pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
         const url = URL.createObjectURL(blob);
         setDownloadUrl(url);
 
@@ -50,24 +204,29 @@ export default function PdfTools() {
           downloadUrl: url,
         });
       } else if (mode === "split") {
-        // Splitting the first uploaded file's pages
         const targetFile = selectedFiles[0];
         const arrayBuffer = await targetFile.arrayBuffer();
         const doc = await PDFDocument.load(arrayBuffer);
         const pageCount = doc.getPageCount();
+        const pageIndices = parsePageRange(splitPages, pageCount);
 
-        // Let's create a ZIP structure or just output page 1 as example
+        if (pageIndices.length === 0) {
+          alert("No valid pages selected. Please enter valid page numbers.");
+          setProcessing(false);
+          return;
+        }
+
         const splitDoc = await PDFDocument.create();
-        const [copiedPage] = await splitDoc.copyPages(doc, [0]);
-        splitDoc.addPage(copiedPage);
+        const copiedPages = await splitDoc.copyPages(doc, pageIndices);
+        copiedPages.forEach((page) => splitDoc.addPage(page));
 
         const pdfBytes = await splitDoc.save();
-        const blob = new Blob([pdfBytes], { type: "application/pdf" });
+        const blob = new Blob([pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
         const url = URL.createObjectURL(blob);
         setDownloadUrl(url);
 
         addHistoryItem({
-          fileName: `split_page_1_${targetFile.name}`,
+          fileName: `split_pages_${splitPages.replace(/\s/g, "")}_${targetFile.name}`,
           fileSize: blob.size,
           toolType: "pdf-split",
           status: "success",
@@ -83,7 +242,7 @@ export default function PdfTools() {
         });
 
         const pdfBytes = await doc.save();
-        const blob = new Blob([pdfBytes], { type: "application/pdf" });
+        const blob = new Blob([pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
         const url = URL.createObjectURL(blob);
         setDownloadUrl(url);
 
@@ -98,13 +257,13 @@ export default function PdfTools() {
         const targetFile = selectedFiles[0];
         const arrayBuffer = await targetFile.arrayBuffer();
         const doc = await PDFDocument.load(arrayBuffer);
-        
-        // pdf-lib does not support native encryption; we set metadata tags to represent the lock state
+
+        // pdf-lib does not support native encryption; we set metadata tags
         doc.setKeywords(["protected", pdfPassword]);
-        doc.setSubject("Encrypted via Easytoconvert");
+        doc.setSubject("Protected via Easytoconvert");
 
         const pdfBytes = await doc.save();
-        const blob = new Blob([pdfBytes], { type: "application/pdf" });
+        const blob = new Blob([pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
         const url = URL.createObjectURL(blob);
         setDownloadUrl(url);
 
@@ -119,96 +278,217 @@ export default function PdfTools() {
         const targetFile = selectedFiles[0];
         const arrayBuffer = await targetFile.arrayBuffer();
 
-        // Dynamically load PDF.js from CDN to extract text
-        let pdfText = "";
-        let pageCount = 0;
-        try {
-          const pdfjsLib = await new Promise<any>((resolve, reject) => {
-            if (typeof window !== "undefined" && (window as any).pdfjsLib) {
-              resolve((window as any).pdfjsLib);
-              return;
-            }
-            const script = document.createElement("script");
-            script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
-            script.onload = () => {
-              (window as any).pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-              resolve((window as any).pdfjsLib);
-            };
-            script.onerror = () => reject(new Error("Failed to load PDF.js engine."));
-            document.head.appendChild(script);
-          });
+        let doc: Document;
 
+        if (docFidelity === "layout") {
+          // ── EXACT LAYOUT MODE ──
+          // Render every page to a high-resolution image and embed it full-width
+          // so the Word document visually matches the PDF exactly (fonts, images,
+          // tables, columns, colours — everything is preserved as rendered).
+          const pdfjsLib = await loadPdfJs();
           const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
-          pageCount = pdf.numPages;
+          const pageCount = pdf.numPages;
+
+          // Word Letter page (8.5in) minus 0.5in margins each side → 7.5in usable.
+          // docx ImageRun transformation is in pixels at 96dpi → 7.5in * 96 = 720px.
+          const USABLE_WIDTH_PX = 720;
+          const sectionChildren: Paragraph[] = [];
 
           for (let i = 1; i <= pageCount; i++) {
             const page = await pdf.getPage(i);
-            const textContent = await page.getTextContent();
-            const items = textContent.items;
+            const baseViewport = page.getViewport({ scale: 1 });
+            const aspect = baseViewport.height / baseViewport.width;
 
-            // Advanced layout-aware sorting: Sort primarily by Y-coordinate (top to bottom)
-            // and secondarily by X-coordinate (left to right)
-            const sortedItems = [...items].sort((a: any, b: any) => {
-              const yDiff = b.transform[5] - a.transform[5]; // Y is index 5
-              if (Math.abs(yDiff) > 5) { // 5px threshold for lines
-                return yDiff;
+            // Render at ~2x the display size for crisp text (≈192 dpi).
+            const renderScale = (USABLE_WIDTH_PX * 2) / baseViewport.width;
+            const viewport = page.getViewport({ scale: renderScale });
+            const canvas = document.createElement("canvas");
+            canvas.width = viewport.width;
+            canvas.height = viewport.height;
+            const ctx = canvas.getContext("2d");
+            if (!ctx) continue;
+
+            // White background so transparent PDFs don't render black in Word.
+            ctx.fillStyle = "#ffffff";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            await page.render({ canvasContext: ctx, viewport }).promise;
+
+            const pngBytes = dataUrlToUint8Array(canvas.toDataURL("image/png"));
+
+            sectionChildren.push(
+              new Paragraph({
+                pageBreakBefore: i > 1,
+                children: [
+                  new ImageRun({
+                    type: "png",
+                    data: pngBytes,
+                    transformation: {
+                      width: USABLE_WIDTH_PX,
+                      height: Math.round(USABLE_WIDTH_PX * aspect),
+                    },
+                  }),
+                ],
+              })
+            );
+          }
+
+          doc = new Document({
+            sections: [
+              {
+                properties: {
+                  page: {
+                    margin: { top: 720, bottom: 720, left: 720, right: 720 }, // 0.5in in twips
+                  },
+                },
+                children: sectionChildren,
+              },
+            ],
+          });
+        } else {
+          // ── EDITABLE TEXT MODE ──
+          // Reflow the extracted text into editable paragraphs. Layout is approximate
+          // but the resulting text is fully selectable and editable in Word.
+          let paragraphs: Paragraph[] = [];
+          let pageCount = 0;
+
+          try {
+            const pdfjsLib = await loadPdfJs();
+            const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+            pageCount = pdf.numPages;
+
+            paragraphs.push(
+              new Paragraph({
+                children: [new TextRun({ text: `Converted: ${targetFile.name}`, bold: true, size: 32 })],
+                heading: HeadingLevel.HEADING_1,
+                spacing: { after: 200 },
+              })
+            );
+            paragraphs.push(
+              new Paragraph({
+                children: [new TextRun({ text: `Total Pages: ${pageCount} | File Size: ${(targetFile.size / 1024).toFixed(1)} KB`, size: 20, color: "666666" })],
+                spacing: { after: 300 },
+              })
+            );
+
+            for (let i = 1; i <= pageCount; i++) {
+              const page = await pdf.getPage(i);
+              const textContent = await page.getTextContent();
+              const items = textContent.items;
+
+              paragraphs.push(
+                new Paragraph({
+                  children: [new TextRun({ text: `Page ${i}`, bold: true, size: 26, color: "4f46e5" })],
+                  heading: HeadingLevel.HEADING_2,
+                  spacing: { before: 400, after: 200 },
+                  border: {
+                    bottom: { style: BorderStyle.SINGLE, size: 1, color: "e5e7eb" },
+                  },
+                })
+              );
+
+              const sortedItems = [...items].sort((a: any, b: any) => {
+                const yDiff = b.transform[5] - a.transform[5];
+                if (Math.abs(yDiff) > 5) return yDiff;
+                return a.transform[4] - b.transform[4];
+              });
+
+              let currentLine = "";
+              let lastY = -1;
+              let lastFontSize = 12;
+
+              for (const item of sortedItems) {
+                const y = item.transform[5];
+                const text = (item as any).str;
+                if (!text || !text.trim()) continue;
+
+                const fontSize = Math.round(Math.abs((item as any).transform[3]) || 12);
+
+                if (lastY === -1) {
+                  currentLine = text;
+                  lastY = y;
+                  lastFontSize = fontSize;
+                } else if (Math.abs(lastY - y) > 5) {
+                  if (currentLine.trim()) {
+                    const isBold = lastFontSize > 14;
+                    paragraphs.push(
+                      new Paragraph({
+                        children: [
+                          new TextRun({
+                            text: currentLine.trim(),
+                            bold: isBold,
+                            size: Math.min(Math.max(lastFontSize * 2, 18), 48),
+                          }),
+                        ],
+                        spacing: { after: 100 },
+                      })
+                    );
+                  }
+                  currentLine = text;
+                  lastY = y;
+                  lastFontSize = fontSize;
+                } else {
+                  currentLine += " " + text;
+                }
               }
-              return a.transform[4] - b.transform[4]; // X is index 4
-            });
 
-            let pageText = "";
-            let lastY = -1;
-            
-            for (const item of sortedItems) {
-              const y = item.transform[5];
-              const text = item.str.trim();
-              if (!text) continue;
+              if (currentLine.trim()) {
+                paragraphs.push(
+                  new Paragraph({
+                    children: [
+                      new TextRun({
+                        text: currentLine.trim(),
+                        size: Math.min(Math.max(lastFontSize * 2, 18), 48),
+                      }),
+                    ],
+                    spacing: { after: 100 },
+                  })
+                );
+              }
 
-              if (lastY === -1) {
-                pageText += text;
-                lastY = y;
-              } else if (Math.abs(lastY - y) > 5) {
-                // New line/paragraph break
-                pageText += "<br/>" + text;
-                lastY = y;
-              } else {
-                // Same line, append with space
-                pageText += " " + text;
+              if (sortedItems.length === 0 || !sortedItems.some((item: any) => item.str?.trim())) {
+                paragraphs.push(
+                  new Paragraph({
+                    children: [
+                      new TextRun({
+                        text: "[Scanned page or no text elements found. Use Exact Layout mode or AI OCR tools.]",
+                        italics: true,
+                        color: "999999",
+                        size: 20,
+                      }),
+                    ],
+                    spacing: { after: 200 },
+                  })
+                );
               }
             }
-
-            pdfText += `<h3>Page ${i}</h3><div>${pageText || "<i>[Scanned page or no text elements found on this page. Try AI OCR tools.]</i>"}</div><br/><hr/><br/>`;
+          } catch (e) {
+            console.error("PDF.js extraction failed:", e);
+            const fallbackDoc = await PDFDocument.load(arrayBuffer);
+            pageCount = fallbackDoc.getPageCount();
+            paragraphs = [
+              new Paragraph({
+                children: [
+                  new TextRun({
+                    text: `PDF text extraction failed. The document has ${pageCount} pages. The PDF may contain scanned images instead of selectable text — try Exact Layout mode.`,
+                    size: 22,
+                  }),
+                ],
+              }),
+            ];
           }
-        } catch (e) {
-          console.error("PDF.js extraction failed, falling back to basic metadata extraction:", e);
-          const doc = await PDFDocument.load(arrayBuffer);
-          pageCount = doc.getPageCount();
-          pdfText = `<p>[PDF.js text extraction bypassed. Preserved metadata and page count: ${pageCount} pages.]</p>`;
+
+          doc = new Document({
+            sections: [{ children: paragraphs }],
+          });
         }
 
-        const docContent = `
-          <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
-          <head><title>Converted PDF</title><style>body { font-family: Arial, sans-serif; padding: 20px; line-height: 1.6; color: #333333; } h3 { color: #4f46e5; border-bottom: 1px solid #e5e7eb; padding-bottom: 5px; }</style></head>
-          <body>
-            <h2>Converted Document: ${targetFile.name}</h2>
-            <p>File Size: ${(targetFile.size / 1024).toFixed(1)} KB</p>
-            <p>Total Pages: ${pageCount}</p>
-            <p>This document was converted from PDF to Word using Easytoconvert.</p>
-            <hr/>
-            <h3>Document Text Content:</h3>
-            <div>
-              ${pdfText}
-            </div>
-          </body>
-          </html>
-        `;
-        const blob = new Blob([docContent], { type: "application/msword" });
-        const url = URL.createObjectURL(blob);
+        const docBlob = await Packer.toBlob(doc);
+        const url = URL.createObjectURL(docBlob);
         setDownloadUrl(url);
 
         addHistoryItem({
-          fileName: `${targetFile.name.split(".")[0]}.doc`,
-          fileSize: blob.size,
+          fileName: `${targetFile.name.split(".")[0]}.docx`,
+          fileSize: docBlob.size,
           toolType: "pdf-to-doc",
           status: "success",
           downloadUrl: url,
@@ -217,58 +497,93 @@ export default function PdfTools() {
         const targetFile = selectedFiles[0];
         const arrayBuffer = await targetFile.arrayBuffer();
 
-        let dataUrl = "";
         try {
-          const pdfjsLib = await new Promise<any>((resolve, reject) => {
-            if (typeof window !== "undefined" && (window as any).pdfjsLib) {
-              resolve((window as any).pdfjsLib);
-              return;
-            }
-            const script = document.createElement("script");
-            script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
-            script.onload = () => {
-              (window as any).pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-              resolve((window as any).pdfjsLib);
-            };
-            script.onerror = () => reject(new Error("Failed to load PDF.js engine."));
-            document.head.appendChild(script);
-          });
-
+          const pdfjsLib = await loadPdfJs();
           const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
-          const page = await pdf.getPage(1); // Render first page as JPG
-          
-          const viewport = page.getViewport({ scale: 2.0 }); // high-res crisp scaling
-          const canvas = document.createElement("canvas");
-          canvas.width = viewport.width;
-          canvas.height = viewport.height;
-          const ctx = canvas.getContext("2d");
+          const numPages = pdf.numPages;
+          const renderedPages: { url: string; page: number }[] = [];
 
-          if (ctx) {
-            const renderContext = {
-              canvasContext: ctx,
-              viewport: viewport,
-            };
-            await page.render(renderContext).promise;
-            dataUrl = canvas.toDataURL("image/jpeg", 0.9);
-            setDownloadUrl(dataUrl);
+          for (let i = 1; i <= numPages; i++) {
+            const page = await pdf.getPage(i);
+            const viewport = page.getViewport({ scale: 2.0 });
+            const canvas = document.createElement("canvas");
+            canvas.width = viewport.width;
+            canvas.height = viewport.height;
+            const ctx = canvas.getContext("2d");
+
+            if (ctx) {
+              await page.render({ canvasContext: ctx, viewport }).promise;
+              const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
+              renderedPages.push({ url: dataUrl, page: i });
+            }
+          }
+
+          setImagePages(renderedPages);
+
+          if (renderedPages.length > 0) {
+            setDownloadUrl(renderedPages[0].url);
+
+            const firstDataUrl = renderedPages[0].url;
+            const strLength = firstDataUrl.length - (firstDataUrl.indexOf(",") + 1);
+            const estSize = Math.round((strLength * 3) / 4);
+
+            addHistoryItem({
+              fileName: `${targetFile.name.split(".")[0]}_${numPages}_pages.jpg`,
+              fileSize: estSize * numPages,
+              toolType: "pdf-to-image",
+              status: "success",
+              downloadUrl: renderedPages[0].url,
+            });
           }
         } catch (e) {
           console.error("PDF to Image rendering failed:", e);
           alert("Error rendering PDF to image. Please check if the file is secure or corrupted.");
         }
+      } else if (mode === "edit") {
+        const targetFile = selectedFiles[0];
+        if (annotations.length === 0) {
+          alert("Add at least one text item by clicking on a page before applying.");
+          setProcessing(false);
+          return;
+        }
 
-        if (dataUrl) {
-          const strLength = dataUrl.length - "data:image/jpeg;base64,".length;
-          const estSize = Math.round(strLength * 3 / 4);
+        const arrayBuffer = await targetFile.arrayBuffer();
+        const pdfDoc = await PDFDocument.load(arrayBuffer);
+        const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+        const pages = pdfDoc.getPages();
 
-          addHistoryItem({
-            fileName: `${targetFile.name.split(".")[0]}.jpg`,
-            fileSize: estSize,
-            toolType: "pdf-to-image",
-            status: "success",
-            downloadUrl: dataUrl,
+        for (const ann of annotations) {
+          const page = pages[ann.page - 1];
+          if (!page) continue;
+          const { width, height } = page.getSize();
+          const { r, g, b } = hexToUnit(ann.color);
+          // Convert top-left ratio to pdf-lib's bottom-left coordinate space.
+          const x = ann.xRatio * width;
+          const yTop = (1 - ann.yRatio) * height;
+          const lines = ann.text.split("\n");
+          lines.forEach((line, idx) => {
+            page.drawText(line, {
+              x,
+              y: yTop - ann.size * (idx + 1),
+              size: ann.size,
+              font,
+              color: rgb(r, g, b),
+            });
           });
         }
+
+        const pdfBytes = await pdfDoc.save();
+        const blob = new Blob([pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
+        const url = URL.createObjectURL(blob);
+        setDownloadUrl(url);
+
+        addHistoryItem({
+          fileName: `edited_${targetFile.name}`,
+          fileSize: blob.size,
+          toolType: "pdf-edit",
+          status: "success",
+          downloadUrl: url,
+        });
       }
     } catch (error) {
       console.error(error);
@@ -283,7 +598,7 @@ export default function PdfTools() {
   return (
     <ToolLayout
       title="PDF Suite Tools"
-      description="Merge multiple PDFs, split documents, rotate orientations, or protect files with encryption entirely in your browser."
+      description="Merge multiple PDFs, split documents, rotate orientations, or convert to Word/Image entirely in your browser."
       category="pdf"
     >
       <div className="space-y-6">
@@ -297,6 +612,7 @@ export default function PdfTools() {
               { id: "protect", label: "Protect PDF" },
               { id: "to-doc", label: "PDF to Word" },
               { id: "to-image", label: "PDF to Image" },
+              { id: "edit", label: "PDF Editor" },
             ].map((t) => (
               <button
                 key={t.id}
@@ -304,6 +620,9 @@ export default function PdfTools() {
                   setMode(t.id as PdfMode);
                   setDownloadUrl(null);
                   setSelectedFiles([]);
+                  setImagePages([]);
+                  setTotalPages(0);
+                  setAnnotations([]);
                 }}
                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${
                   mode === t.id
@@ -329,6 +648,17 @@ export default function PdfTools() {
           </button>
         </div>
 
+        {/* Protect Mode Disclaimer */}
+        {mode === "protect" && (
+          <div className="p-3.5 rounded-xl border border-red-500/30 bg-red-50/50 dark:bg-red-950/10 flex items-start space-x-2.5">
+            <AlertTriangle className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
+            <div className="text-xs text-red-700 dark:text-red-400 space-y-1">
+              <span className="font-bold block">⚠ No Real Encryption — Metadata Tag Only</span>
+              <span>Browser-based PDF libraries <strong>cannot apply real password encryption</strong>. The label you enter below is stored as a plain-text keyword tag in the PDF metadata — anyone can read it in any PDF viewer. <strong>Do not use this for confidential files.</strong> For true password protection, use Adobe Acrobat or a desktop PDF tool.</span>
+            </div>
+          </div>
+        )}
+
         {/* Dropzone selection */}
         <Dropzone
           onFilesSelected={handleFilesSelected}
@@ -336,13 +666,36 @@ export default function PdfTools() {
           multiple={mode === "merge"}
           maxSizeMB={50}
           title={
-            mode === "merge" ? "Drag & drop multiple PDFs to merge" : "Drag & drop a PDF file to process"
+            mode === "merge"
+              ? "Drag & drop multiple PDFs to merge"
+              : mode === "edit"
+              ? "Drag & drop a PDF to edit"
+              : "Drag & drop a PDF file to process"
           }
         />
 
-        {/* Configurations for Rotate/Protect */}
+        {/* Configurations */}
         {selectedFiles.length > 0 && (
           <div className="space-y-4 pt-2">
+            {/* Split Page Range */}
+            {mode === "split" && (
+              <div className="space-y-2 max-w-md">
+                <label className="text-[10px] uppercase font-bold text-slate-400">
+                  Page Range to Extract {totalPages > 0 && `(Total: ${totalPages} pages)`}
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. 1-3, 5, 7-9"
+                  className="w-full glass-input text-xs"
+                  value={splitPages}
+                  onChange={(e) => setSplitPages(e.target.value)}
+                />
+                <p className="text-[10px] text-slate-400">
+                  Separate pages with commas, use dashes for ranges. Example: 1-3, 5, 8-10
+                </p>
+              </div>
+            )}
+
             {mode === "rotate" && (
               <div className="space-y-1.5 max-w-xs">
                 <label className="text-[10px] uppercase font-bold text-slate-400">Rotation Angle</label>
@@ -366,10 +719,10 @@ export default function PdfTools() {
 
             {mode === "protect" && (
               <div className="space-y-1.5 max-w-xs">
-                <label className="text-[10px] uppercase font-bold text-slate-400">Set PDF Password</label>
+                <label className="text-[10px] uppercase font-bold text-slate-400">Metadata Label (not a real password)</label>
                 <input
-                  type="password"
-                  placeholder="Secret password..."
+                  type="text"
+                  placeholder="e.g. Confidential — Internal Use"
                   className="w-full glass-input text-xs"
                   value={pdfPassword}
                   onChange={(e) => setPdfPassword(e.target.value)}
@@ -377,14 +730,187 @@ export default function PdfTools() {
               </div>
             )}
 
+            {mode === "to-doc" && (
+              <div className="space-y-2 max-w-md">
+                <label className="text-[10px] uppercase font-bold text-slate-400">Conversion Fidelity</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => setDocFidelity("layout")}
+                    className={`p-3 rounded-lg border text-left transition-all ${
+                      docFidelity === "layout"
+                        ? "border-indigo-500 bg-indigo-50/10 dark:bg-indigo-950/10"
+                        : "border-slate-200 dark:border-slate-800 hover:border-slate-300"
+                    }`}
+                  >
+                    <span className="block text-xs font-bold text-slate-800 dark:text-slate-200">Exact Layout</span>
+                    <span className="block text-[10px] text-slate-400 mt-0.5">Pixel-perfect — preserves images, tables, fonts & columns exactly as the PDF.</span>
+                  </button>
+                  <button
+                    onClick={() => setDocFidelity("text")}
+                    className={`p-3 rounded-lg border text-left transition-all ${
+                      docFidelity === "text"
+                        ? "border-indigo-500 bg-indigo-50/10 dark:bg-indigo-950/10"
+                        : "border-slate-200 dark:border-slate-800 hover:border-slate-300"
+                    }`}
+                  >
+                    <span className="block text-xs font-bold text-slate-800 dark:text-slate-200">Editable Text</span>
+                    <span className="block text-[10px] text-slate-400 mt-0.5">Fully selectable & editable text. Layout is approximate; images are skipped.</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* PDF Editor toolbar */}
+            {mode === "edit" && (
+              <div className="space-y-3">
+                <div className="p-3.5 rounded-xl border border-indigo-500/20 bg-indigo-50/50 dark:bg-indigo-950/10 flex items-start space-x-2.5">
+                  <Type className="w-4 h-4 text-indigo-500 mt-0.5 flex-shrink-0" />
+                  <div className="text-xs text-indigo-700 dark:text-indigo-400">
+                    <span className="font-bold block">Click anywhere on a page to stamp your text</span>
+                    <span>Set the text, size, and color below, then click the spot on the page where it should appear. Add as many as you like, then apply.</span>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-end gap-3">
+                  <div className="space-y-1 flex-grow min-w-[200px]">
+                    <label className="text-[10px] uppercase font-bold text-slate-400">Text to add</label>
+                    <input
+                      type="text"
+                      className="w-full glass-input text-xs"
+                      placeholder="Type the text to stamp..."
+                      value={editText}
+                      onChange={(e) => setEditText(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-1 w-28">
+                    <label className="text-[10px] uppercase font-bold text-slate-400">Size ({editSize}px)</label>
+                    <input
+                      type="range"
+                      min="8"
+                      max="72"
+                      className="w-full accent-indigo-500"
+                      value={editSize}
+                      onChange={(e) => setEditSize(Number(e.target.value))}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold text-slate-400">Color</label>
+                    <input
+                      type="color"
+                      className="w-10 h-8 rounded cursor-pointer border bg-transparent block"
+                      value={editColor}
+                      onChange={(e) => setEditColor(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                {annotations.length > 0 && (
+                  <div className="text-[10px] text-slate-400">
+                    {annotations.length} text item{annotations.length > 1 ? "s" : ""} placed. Click a marker on a page to remove it.
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Execute Button */}
             <button
               onClick={processPdf}
-              disabled={processing || (mode === "protect" && !pdfPassword)}
-              className="px-6 py-2.5 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-755 text-white disabled:opacity-50 transition-all flex items-center space-x-1.5 shadow-md"
+              disabled={
+                processing ||
+                (mode === "protect" && !pdfPassword) ||
+                (mode === "edit" && annotations.length === 0)
+              }
+              className="px-6 py-2.5 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50 transition-all flex items-center space-x-1.5 shadow-md"
             >
-              <span>{processing ? "Processing File..." : `Apply PDF ${mode}`}</span>
+              <span>
+                {processing
+                  ? "Processing File..."
+                  : mode === "edit"
+                  ? "Apply Edits & Download"
+                  : `Apply PDF ${mode}`}
+              </span>
             </button>
+          </div>
+        )}
+
+        {/* Editor canvas (for edit mode) — click a page to stamp text */}
+        {mode === "edit" && imagePages.length > 0 && (
+          <div className="space-y-4">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">
+              Editor — {imagePages.length} page{imagePages.length > 1 ? "s" : ""}
+            </h4>
+            <div className="space-y-6">
+              {imagePages.map((img) => (
+                <div key={img.page} className="space-y-1.5">
+                  <span className="text-[10px] font-semibold text-slate-500">Page {img.page}</span>
+                  <div className="relative inline-block w-full max-w-2xl rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden bg-white">
+                    <img
+                      src={img.url}
+                      alt={`Page ${img.page}`}
+                      onClick={(e) => addAnnotation(img.page, e)}
+                      className="w-full h-auto cursor-crosshair select-none"
+                      draggable={false}
+                    />
+                    {annotations
+                      .filter((a) => a.page === img.page)
+                      .map((a) => (
+                        <button
+                          key={a.id}
+                          type="button"
+                          onClick={() => removeAnnotation(a.id)}
+                          title="Click to remove this text"
+                          className="absolute group"
+                          style={{
+                            left: `${a.xRatio * 100}%`,
+                            top: `${a.yRatio * 100}%`,
+                            color: a.color,
+                            fontSize: `${Math.max(8, a.size * 0.6)}px`,
+                            lineHeight: 1,
+                          }}
+                        >
+                          <span className="whitespace-pre font-semibold border border-dashed border-transparent group-hover:border-red-400 group-hover:bg-red-50/40 rounded-sm px-0.5">
+                            {a.text}
+                          </span>
+                        </button>
+                      ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Image Gallery (for to-image mode) — shown for all page counts */}
+        {mode === "to-image" && imagePages.length > 0 && (
+          <div className="space-y-4">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">
+              {imagePages.length === 1 ? "Page Rendered" : `All Pages Rendered (${imagePages.length} pages)`}
+            </h4>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              {imagePages.map((img) => (
+                <div
+                  key={img.page}
+                  className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden bg-white dark:bg-slate-900 group"
+                >
+                  <img
+                    src={img.url}
+                    alt={`Page ${img.page}`}
+                    className="w-full h-auto"
+                  />
+                  <div className="p-2.5 flex items-center justify-between border-t border-slate-100 dark:border-slate-800">
+                    <span className="text-[10px] font-semibold text-slate-500">Page {img.page}</span>
+                    <a
+                      href={img.url}
+                      download={`page_${img.page}.jpg`}
+                      className="text-[10px] font-bold text-indigo-500 hover:text-indigo-600 flex items-center space-x-1"
+                    >
+                      <Download className="w-3 h-3" />
+                      <span>Save</span>
+                    </a>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
@@ -393,11 +919,19 @@ export default function PdfTools() {
           <div className="p-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 flex items-center justify-between">
             <div className="flex items-center space-x-3">
               <div className="p-2 rounded bg-emerald-500/10 text-emerald-500">
-                <FileText className="w-5 h-5" />
+                {mode === "to-image" ? (
+                  <ImageIcon className="w-5 h-5" />
+                ) : (
+                  <FileText className="w-5 h-5" />
+                )}
               </div>
               <div>
-                <span className="text-xs font-bold text-slate-850 dark:text-slate-250 block">Success! File Ready</span>
-                <span className="text-[10px] text-slate-450 text-slate-400">Your processed PDF is ready for download.</span>
+                <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">Success! File Ready</span>
+                <span className="text-[10px] text-slate-400">
+                  {mode === "to-image" && imagePages.length > 1
+                    ? `${imagePages.length} pages rendered. Download individually above or the first page below.`
+                    : "Your processed file is ready for download."}
+                </span>
               </div>
             </div>
             <a
@@ -406,14 +940,16 @@ export default function PdfTools() {
                 mode === "merge"
                   ? `merged_${Date.now()}.pdf`
                   : mode === "to-doc"
-                  ? `${selectedFiles[0]?.name.split(".")[0] || "document"}.doc`
+                  ? `${selectedFiles[0]?.name.split(".")[0] || "document"}.docx`
                   : mode === "to-image"
-                  ? `${selectedFiles[0]?.name.split(".")[0] || "preview"}.jpg`
+                  ? `${selectedFiles[0]?.name.split(".")[0] || "preview"}_page1.jpg`
+                  : mode === "edit"
+                  ? `edited_${selectedFiles[0]?.name || "document.pdf"}`
                   : `${mode}_pdf_${Date.now()}.pdf`
               }
               className="px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-500 hover:bg-emerald-600 text-white transition-all shadow-sm"
             >
-              Download Converted File
+              Download {mode === "to-doc" ? ".docx" : mode === "to-image" ? "Page 1" : "File"}
             </a>
           </div>
         )}

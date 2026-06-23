@@ -18,7 +18,7 @@ export default function Navbar() {
     { name: "Split PDF", url: "/pdf" },
     { name: "Rotate PDF", url: "/pdf" },
     { name: "PDF to Word", url: "/pdf" },
-    { name: "PDF to Text", url: "/pdf" },
+    { name: "PDF to Image", url: "/pdf" },
     { name: "JPG to PNG", url: "/image" },
     { name: "PNG to JPG", url: "/image" },
     { name: "WebP Converter", url: "/image" },
@@ -47,6 +47,7 @@ export default function Navbar() {
       setSearchQuery("");
       setSearchOpen(false);
     }
+    // If no tools match, keep the query visible so user can adjust it
   };
 
   return (
@@ -135,7 +136,7 @@ export default function Navbar() {
               href="/dashboard"
               className="px-4 py-1.5 rounded-lg text-sm font-semibold bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg shadow-indigo-500/20 hover:opacity-90 transition-all"
             >
-              Sign In
+              Dashboard
             </Link>
           </div>
 

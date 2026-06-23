@@ -28,6 +28,16 @@ export default function Dashboard() {
   const [showKey, setShowKey] = useState(false);
   const [copied, setCopied] = useState(false);
 
+  const countByCategory = (prefix: string) =>
+    history.filter((h) => h.toolType.startsWith(prefix)).length;
+
+  const pdfCount = countByCategory("pdf");
+  const imageCount = countByCategory("image");
+  const dataCount = countByCategory("data");
+  const devCount = countByCategory("dev") + countByCategory("javascript");
+
+  const total = pdfCount + imageCount + dataCount + devCount || 1; // avoid /0
+
   const generateApiKey = () => {
     const key = "ehp_" + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
     setApiKey(key);
@@ -78,37 +88,23 @@ export default function Dashboard() {
               <span className="text-[10px] text-slate-400">Updated just now</span>
             </div>
 
-            {/* Custom SVG/Bar Chart to show activity */}
+            {/* Live analytics from real history */}
             <div className="space-y-4 pt-2">
               <div className="grid grid-cols-4 gap-4 text-center">
-                <div className="p-3 bg-slate-50 dark:bg-slate-900/60 rounded-xl border border-slate-200/40 dark:border-slate-800/40">
-                  <span className="text-[10px] text-slate-400 uppercase font-medium">PDF Tools</span>
-                  <p className="text-lg font-extrabold text-slate-700 dark:text-slate-200 mt-1">12</p>
-                  <div className="w-full bg-slate-200 dark:bg-slate-800 h-1.5 rounded-full mt-2 overflow-hidden">
-                    <div className="bg-red-500 h-full rounded-full" style={{ width: "40%" }} />
+                {[
+                  { label: "PDF Tools", count: pdfCount, color: "bg-red-500" },
+                  { label: "Images", count: imageCount, color: "bg-blue-500" },
+                  { label: "Data", count: dataCount, color: "bg-emerald-500" },
+                  { label: "Developer", count: devCount, color: "bg-purple-500" },
+                ].map(({ label, count, color }) => (
+                  <div key={label} className="p-3 bg-slate-50 dark:bg-slate-900/60 rounded-xl border border-slate-200/40 dark:border-slate-800/40">
+                    <span className="text-[10px] text-slate-400 uppercase font-medium">{label}</span>
+                    <p className="text-lg font-extrabold text-slate-700 dark:text-slate-200 mt-1">{count}</p>
+                    <div className="w-full bg-slate-200 dark:bg-slate-800 h-1.5 rounded-full mt-2 overflow-hidden">
+                      <div className={`${color} h-full rounded-full transition-all`} style={{ width: `${Math.min(100, Math.round((count / total) * 100))}%` }} />
+                    </div>
                   </div>
-                </div>
-                <div className="p-3 bg-slate-50 dark:bg-slate-900/60 rounded-xl border border-slate-200/40 dark:border-slate-800/40">
-                  <span className="text-[10px] text-slate-400 uppercase font-medium">Images</span>
-                  <p className="text-lg font-extrabold text-slate-700 dark:text-slate-200 mt-1">28</p>
-                  <div className="w-full bg-slate-200 dark:bg-slate-800 h-1.5 rounded-full mt-2 overflow-hidden">
-                    <div className="bg-blue-500 h-full rounded-full" style={{ width: "75%" }} />
-                  </div>
-                </div>
-                <div className="p-3 bg-slate-50 dark:bg-slate-900/60 rounded-xl border border-slate-200/40 dark:border-slate-800/40">
-                  <span className="text-[10px] text-slate-400 uppercase font-medium">Data</span>
-                  <p className="text-lg font-extrabold text-slate-700 dark:text-slate-200 mt-1">45</p>
-                  <div className="w-full bg-slate-200 dark:bg-slate-800 h-1.5 rounded-full mt-2 overflow-hidden">
-                    <div className="bg-emerald-500 h-full rounded-full" style={{ width: "90%" }} />
-                  </div>
-                </div>
-                <div className="p-3 bg-slate-50 dark:bg-slate-900/60 rounded-xl border border-slate-200/40 dark:border-slate-800/40">
-                  <span className="text-[10px] text-slate-400 uppercase font-medium">Developer</span>
-                  <p className="text-lg font-extrabold text-slate-700 dark:text-slate-200 mt-1">8</p>
-                  <div className="w-full bg-slate-200 dark:bg-slate-800 h-1.5 rounded-full mt-2 overflow-hidden">
-                    <div className="bg-purple-500 h-full rounded-full" style={{ width: "25%" }} />
-                  </div>
-                </div>
+                ))}
               </div>
             </div>
           </div>
@@ -263,7 +259,7 @@ export default function Dashboard() {
                       {item.fileName}
                     </td>
                     <td className="py-3 font-medium capitalize text-indigo-500">
-                      {item.toolType.replace("-", " ")}
+                      {item.toolType.replace(/-/g, " ")}
                     </td>
                     <td className="py-3 text-slate-500">
                       {(item.fileSize / 1024).toFixed(1)} KB

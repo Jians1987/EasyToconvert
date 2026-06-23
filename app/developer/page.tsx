@@ -74,6 +74,8 @@ export default function DevTools() {
           r += "-";
         } else if (i === 14) {
           r += "4";
+        } else if (i === 19) {
+          r += hex[Math.floor(Math.random() * 4) + 8]; // must be 8, 9, a, or b (RFC 4122 variant)
         } else {
           r += hex[Math.floor(Math.random() * 16)];
         }
@@ -125,9 +127,9 @@ export default function DevTools() {
   };
 
   const copyToClipboard = () => {
-    const target = qrUrl || outputText;
+    const target = qrUrl ? inputText : outputText;
     if (!target) return;
-    navigator.clipboard.writeText(outputText);
+    navigator.clipboard.writeText(target);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -262,13 +264,13 @@ export default function DevTools() {
           <div className="space-y-2">
             <div className="flex justify-between items-center">
               <label className="text-[10px] uppercase font-bold text-slate-400">Result Output</label>
-              {outputText && (
+              {(outputText || qrUrl) && (
                 <button
                   onClick={copyToClipboard}
                   className="text-[10px] text-slate-400 hover:text-indigo-500 flex items-center space-x-1 font-semibold"
                 >
                   {copied ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
-                  <span>{copied ? "Copied!" : "Copy Result"}</span>
+                  <span>{copied ? "Copied!" : qrUrl ? "Copy Text" : "Copy Result"}</span>
                 </button>
               )}
             </div>

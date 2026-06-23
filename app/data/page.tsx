@@ -33,17 +33,37 @@ export default function DataTools() {
         }
       } else if (mode === "csv-json") {
         if (action === "convert") {
-          // CSV to JSON
+          // CSV to JSON — RFC 4180 compliant parser supporting quoted fields with commas
+          const parseCsvLine = (line: string): string[] => {
+            const fields: string[] = [];
+            let current = "";
+            let inQuotes = false;
+            for (let i = 0; i < line.length; i++) {
+              const ch = line[i];
+              if (ch === '"') {
+                if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
+                else { inQuotes = !inQuotes; }
+              } else if (ch === "," && !inQuotes) {
+                fields.push(current.trim());
+                current = "";
+              } else {
+                current += ch;
+              }
+            }
+            fields.push(current.trim());
+            return fields;
+          };
+
           const lines = inputText.trim().split("\n");
-          if (lines.length < 2) throw new Error("CSV must contain at least a header and one row.");
-          const headers = lines[0].split(",").map(h => h.trim().replace(/^["']|["']$/g, ''));
+          if (lines.length < 2) throw new Error("CSV must contain at least a header and one data row.");
+          const headers = parseCsvLine(lines[0]);
           const result = [];
           for (let i = 1; i < lines.length; i++) {
             if (!lines[i].trim()) continue;
             const obj: { [key: string]: string } = {};
-            const currentline = lines[i].split(",").map(val => val.trim().replace(/^["']|["']$/g, ''));
+            const values = parseCsvLine(lines[i]);
             headers.forEach((header, index) => {
-              obj[header] = currentline[index] || "";
+              obj[header] = values[index] ?? "";
             });
             result.push(obj);
           }
@@ -113,6 +133,7 @@ export default function DataTools() {
     try {
       const parsed = JSON.parse(inputText);
       const array = Array.isArray(parsed) ? parsed : [parsed];
+      if (array.length === 0) throw new Error("Input JSON array is empty — nothing to convert.");
       const headers = Object.keys(array[0]);
       const csvRows = [
         headers.join(","), // header row
