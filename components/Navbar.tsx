@@ -4,15 +4,13 @@ import React, { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import ThemeToggle from "./ThemeToggle";
-import { Menu, X, Command, Search, Sparkles, LayoutDashboard, Database, FileText, Image as ImageIcon, Code, Settings } from "lucide-react";
+import { Menu, X, Command, Search, Sparkles, LayoutDashboard, Database, FileText, Image as ImageIcon, Code } from "lucide-react";
 
 export default function Navbar() {
   const [isOpen, setIsOpen] = useState(false);
-  const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const router = useRouter();
 
-  // Simple static list of tools for quick searching
   const toolsList = [
     { name: "Merge PDF", url: "/pdf" },
     { name: "Split PDF", url: "/pdf" },
@@ -32,6 +30,7 @@ export default function Navbar() {
     { name: "JS Minifier", url: "/javascript" },
     { name: "CSS Gradient", url: "/javascript" },
     { name: "AI Summarizer", url: "/ai" },
+    { name: "Table Detection", url: "/table-detect" },
   ];
 
   const filteredTools = searchQuery
@@ -45,9 +44,8 @@ export default function Navbar() {
     if (filteredTools.length > 0) {
       router.push(filteredTools[0].url);
       setSearchQuery("");
-      setSearchOpen(false);
+      setIsOpen(false);
     }
-    // If no tools match, keep the query visible so user can adjust it
   };
 
   return (
@@ -88,12 +86,11 @@ export default function Navbar() {
               <Sparkles className="w-4 h-4 text-purple-400" />
               <span>AI</span>
             </Link>
-
           </div>
 
-          {/* Actions & Utilities */}
+          {/* Actions */}
           <div className="hidden md:flex items-center space-x-4">
-            {/* Search Bar */}
+            {/* Search */}
             <div className="relative">
               <form onSubmit={handleSearchSubmit} className="relative">
                 <input
@@ -105,7 +102,6 @@ export default function Navbar() {
                 />
                 <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
               </form>
-              {/* Dropdown list of filtered tools */}
               {searchQuery && (
                 <div className="absolute right-0 mt-2 w-64 rounded-xl border border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-950/95 backdrop-blur-lg shadow-xl overflow-hidden z-50">
                   {filteredTools.length > 0 ? (
@@ -140,7 +136,7 @@ export default function Navbar() {
             </Link>
           </div>
 
-          {/* Mobile menu toggle */}
+          {/* Mobile toggle */}
           <div className="flex items-center space-x-2 md:hidden">
             <ThemeToggle />
             <button
@@ -157,47 +153,25 @@ export default function Navbar() {
       {isOpen && (
         <div className="md:hidden glass-panel border-t border-slate-200/50 dark:border-slate-800/50 transition-all duration-300">
           <div className="px-2 pt-2 pb-4 space-y-1 sm:px-3">
-            <Link
-              href="/pdf"
-              onClick={() => setIsOpen(false)}
-              className="block px-3 py-2 rounded-md text-base font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900"
-            >
+            <Link href="/pdf" onClick={() => setIsOpen(false)} className="block px-3 py-2 rounded-md text-base font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900">
               PDF Tools
             </Link>
-            <Link
-              href="/image"
-              onClick={() => setIsOpen(false)}
-              className="block px-3 py-2 rounded-md text-base font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900"
-            >
+            <Link href="/image" onClick={() => setIsOpen(false)} className="block px-3 py-2 rounded-md text-base font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900">
               Image Tools
             </Link>
-            <Link
-              href="/data"
-              onClick={() => setIsOpen(false)}
-              className="block px-3 py-2 rounded-md text-base font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900"
-            >
+            <Link href="/data" onClick={() => setIsOpen(false)} className="block px-3 py-2 rounded-md text-base font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900">
               Data Tools
             </Link>
-            <Link
-              href="/developer"
-              onClick={() => setIsOpen(false)}
-              className="block px-3 py-2 rounded-md text-base font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900"
-            >
+            <Link href="/developer" onClick={() => setIsOpen(false)} className="block px-3 py-2 rounded-md text-base font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900">
               Developer Tools
             </Link>
-            <Link
-              href="/ai"
-              onClick={() => setIsOpen(false)}
-              className="block px-3 py-2 rounded-md text-base font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900 text-purple-400"
-            >
+            <Link href="/ai" onClick={() => setIsOpen(false)} className="block px-3 py-2 rounded-md text-base font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900 text-purple-400">
               AI Tools
             </Link>
-
-            <Link
-              href="/dashboard"
-              onClick={() => setIsOpen(false)}
-              className="block px-3 py-2 rounded-md text-base font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900"
-            >
+            <Link href="/table-detect" onClick={() => setIsOpen(false)} className="block px-3 py-2 rounded-md text-base font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900">
+              Table Detection
+            </Link>
+            <Link href="/dashboard" onClick={() => setIsOpen(false)} className="block px-3 py-2 rounded-md text-base font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900">
               Dashboard
             </Link>
           </div>

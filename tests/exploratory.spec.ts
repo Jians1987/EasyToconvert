@@ -25,7 +25,7 @@ test.describe("Edge: invalid input handling", () => {
 
     let dialogMsg = "";
     page.on("dialog", (d) => { dialogMsg = d.message(); d.dismiss(); });
-    await page.getByRole("button", { name: /Apply PDF split/i }).click();
+    await page.getByRole("button", { name: /Convert & Apply/i }).click();
     await expect.poll(() => dialogMsg).toMatch(/No valid pages/i);
   });
 
@@ -100,7 +100,7 @@ test.describe("Edge: messaging & safety", () => {
       mimeType: "application/pdf",
       buffer: await makePdf(1),
     });
-    const field = page.getByPlaceholder(/Confidential/i);
+    const field = page.getByPlaceholder(/Password tag/i);
     await expect(field).toBeVisible();
     await expect(field).toHaveAttribute("type", "text");
   });

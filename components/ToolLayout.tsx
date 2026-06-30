@@ -3,12 +3,12 @@
 import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { FileText, Image as ImageIcon, Database, Code, Sparkles, Video, HelpCircle, ArrowLeft } from "lucide-react";
+import { FileText, Image as ImageIcon, Database, Code, Sparkles, Video, Table2, HelpCircle, ArrowLeft } from "lucide-react";
 
 interface ToolLayoutProps {
   title: string;
   description: string;
-  category: "pdf" | "image" | "data" | "developer" | "javascript" | "ai" | "media";
+  category: "pdf" | "image" | "data" | "developer" | "javascript" | "ai" | "media" | "table-detect";
   children: React.ReactNode;
 }
 
@@ -28,6 +28,7 @@ export default function ToolLayout({
     { id: "javascript", name: "JS & HTML/CSS", icon: Code, path: "/javascript" },
     { id: "ai", name: "AI Assistants", icon: Sparkles, path: "/ai" },
     { id: "media", name: "Video & Audio", icon: Video, path: "/media" },
+    { id: "table-detect", name: "Table Detection", icon: Table2, path: "/table-detect" },
   ];
 
   return (

@@ -9,13 +9,12 @@ import {
   Code,
   Sparkles,
   Video,
+  Table2,
   ChevronRight,
-  TrendingUp,
   Shield,
   Zap,
   Users,
   Search,
-  CheckCircle,
   Star
 } from "lucide-react";
 
@@ -86,9 +85,17 @@ export default function LandingPage() {
       tools: ["Compress Audio", "Extract Audio", "Audio Cutter"],
       path: "/media",
     },
+    {
+      id: "table-detect",
+      title: "Table Detection",
+      icon: Table2,
+      color: "from-rose-500/20 to-pink-500/20 text-rose-500 border-rose-500/30",
+      description: "Research-grade AI table detection powered by Microsoft Table Transformer (TATR). Locate tables in any PDF or image, extract rows & columns, export to CSV / JSON / Excel — 100% on-device.",
+      tools: ["Table Detector", "Structure Recognition", "CSV Export", "Excel Export", "JSON Export"],
+      path: "/table-detect",
+    },
   ];
 
-  // Filtering based on search query
   const filteredCategories = searchQuery
     ? categories.filter(
         (cat) =>
@@ -101,17 +108,14 @@ export default function LandingPage() {
     <div className="space-y-20">
       {/* 1. Hero Section */}
       <section className="text-center py-12 md:py-20 relative overflow-hidden">
-        {/* Glow Effects */}
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-indigo-500/10 dark:bg-indigo-500/5 rounded-full blur-[100px] pointer-events-none -z-10 animate-pulse-slow" />
 
         <div className="space-y-6 max-w-4xl mx-auto">
-          {/* Tag */}
           <div className="inline-flex items-center space-x-2 px-3 py-1.5 rounded-full bg-indigo-50/50 dark:bg-slate-900/50 border border-indigo-200/50 dark:border-indigo-800/30 text-xs font-semibold text-indigo-600 dark:text-indigo-400">
             <Sparkles className="w-3.5 h-3.5" />
             <span>All Utilities In One Dashboard</span>
           </div>
 
-          {/* Heading */}
           <h1 className="text-4xl md:text-6xl font-extrabold tracking-tight leading-[1.1] bg-clip-text text-transparent bg-gradient-to-r from-slate-950 via-slate-800 to-indigo-600 dark:from-white dark:via-slate-200 dark:to-indigo-400">
             Smart File Conversion & <br />
             <span className="bg-clip-text text-transparent bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500">
@@ -119,18 +123,16 @@ export default function LandingPage() {
             </span>
           </h1>
 
-          {/* Subheading */}
           <p className="text-base md:text-xl text-slate-500 dark:text-slate-400 max-w-2xl mx-auto leading-relaxed">
             Easytoconvert is a privacy-first web workspace offering image compression, PDF compilers, data formatters, encoders, generators, and smart AI capabilities.
           </p>
 
-          {/* Interactive Search Area */}
           <div className="max-w-xl mx-auto pt-4 px-4">
             <div className="relative glass-card p-1.5 flex items-center border-slate-300/80 dark:border-slate-800 shadow-2xl">
               <Search className="w-5 h-5 text-slate-400 ml-3" />
               <input
                 type="text"
-                placeholder="Search PDF to Word, Image compression, QR code, Base64..."
+                placeholder="Search PDF to Word, Image compression, QR code, Table Detection..."
                 className="flex-grow bg-transparent text-sm py-2.5 px-3 outline-none placeholder-slate-400"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
@@ -169,7 +171,6 @@ export default function LandingPage() {
                 className="glass-card glass-card-hover p-6 flex flex-col justify-between"
               >
                 <div className="space-y-4">
-                  {/* Category Header */}
                   <div className="flex items-center space-x-3">
                     <div className={`p-2.5 rounded-xl border bg-gradient-to-br ${cat.color}`}>
                       <Icon className="w-5 h-5" />
@@ -179,12 +180,10 @@ export default function LandingPage() {
                     </h3>
                   </div>
 
-                  {/* Description */}
                   <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
                     {cat.description}
                   </p>
 
-                  {/* List of Key Tools */}
                   <div className="flex flex-wrap gap-1.5 pt-2">
                     {cat.tools.map((tool) => (
                       <Link
@@ -198,7 +197,6 @@ export default function LandingPage() {
                   </div>
                 </div>
 
-                {/* Footer Action */}
                 <div className="pt-6 mt-6 border-t border-slate-100 dark:border-slate-800/60">
                   <Link
                     href={cat.path}
@@ -231,7 +229,7 @@ export default function LandingPage() {
               <Shield className="w-6 h-6" />
             </div>
             <h3 className="text-3xl font-extrabold text-slate-800 dark:text-slate-100">100%</h3>
-            <p className="text-xs text-slate-400">Privacy & Local Processing</p>
+            <p className="text-xs text-slate-400">Privacy &amp; Local Processing</p>
           </div>
           <div className="space-y-2">
             <div className="p-3 rounded-full bg-purple-500/10 text-purple-500 w-fit mx-auto">
@@ -243,7 +241,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* 4. Testimonials & Trust */}
+      {/* 4. Testimonials */}
       <section className="space-y-8">
         <div className="text-center space-y-2">
           <h2 className="text-2xl md:text-3xl font-extrabold text-slate-800 dark:text-slate-100">

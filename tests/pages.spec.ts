@@ -317,7 +317,7 @@ test.describe("PDF modes", () => {
     await page.goto("/pdf");
     await page.getByRole("button", { name: "Rotate PDF" }).click();
     await page.locator('input[type=file]').setInputFiles({ name: "r.pdf", mimeType: "application/pdf", buffer: await pdf(1) });
-    await page.getByRole("button", { name: /Apply PDF rotate/i }).click();
+    await page.getByRole("button", { name: /Convert & Apply/i }).click();
     await expect(page.getByRole("link", { name: /Download File/i })).toBeVisible({ timeout: 15000 });
   });
 
@@ -325,7 +325,7 @@ test.describe("PDF modes", () => {
     await page.goto("/pdf");
     await page.getByRole("button", { name: "Split PDF" }).click();
     await page.locator('input[type=file]').setInputFiles({ name: "s.pdf", mimeType: "application/pdf", buffer: await pdf(3) });
-    await page.getByRole("button", { name: /Apply PDF split/i }).click();
+    await page.getByRole("button", { name: /Convert & Apply/i }).click();
     await expect(page.getByRole("link", { name: /Download File/i })).toBeVisible({ timeout: 15000 });
   });
 
@@ -344,7 +344,7 @@ test.describe("PDF modes", () => {
 
     await page.getByRole("button", { name: "PDF to Excel" }).click();
     await page.locator('input[type=file]').setInputFiles({ name: "t.pdf", mimeType: "application/pdf", buffer: buf });
-    await page.getByRole("button", { name: /Convert to Excel/i }).click();
+    await page.getByRole("button", { name: /Convert & Apply/i }).click();
     const dl = page.getByRole("link", { name: /Download \.xlsx/i });
     await dl.waitFor({ timeout: 20000 });
     const href = await dl.getAttribute("href");
@@ -371,10 +371,10 @@ test.describe("PDF modes", () => {
     const buf = Buffer.from(await doc.save());
 
     await page.getByRole("button", { name: "PDF to Excel" }).click();
+    await page.locator('input[type=file]').setInputFiles({ name: "t.pdf", mimeType: "application/pdf", buffer: buf });
     await page.getByRole("checkbox").check();
     await page.getByPlaceholder(/Anthropic API key/i).fill("sk-ant-test");
-    await page.locator('input[type=file]').setInputFiles({ name: "t.pdf", mimeType: "application/pdf", buffer: buf });
-    await page.getByRole("button", { name: /Convert to Excel/i }).click();
+    await page.getByRole("button", { name: /Convert & Apply/i }).click();
     const dl = page.getByRole("link", { name: /Download \.xlsx/i });
     await dl.waitFor({ timeout: 20000 });
     const href = await dl.getAttribute("href");
@@ -390,21 +390,41 @@ test.describe("PDF modes", () => {
     await page.locator('input[type=file]').setInputFiles({ name: "e.pdf", mimeType: "application/pdf", buffer: await pdf(1) });
     const preview = page.locator('img[alt="Page 1"]');
     await preview.waitFor({ timeout: 30000 });
-    await page.getByPlaceholder(/Type the text to stamp/i).fill("Approved");
-    await preview.click({ position: { x: 50, y: 60 } });
-    // a removable marker appears for the placed text
-    await expect(page.locator('button[title="Click to remove this text"]')).toHaveCount(1);
-    await page.getByRole("button", { name: /Apply Edits & Download/i }).click();
+    
+    // Select Text tool
+    await page.getByRole("button", { name: "Text", exact: true }).click();
+    await page.getByPlaceholder(/Text value.../i).fill("Approved");
+    
+    // Click page to place annotation
+    await page.locator('svg[viewBox="0 0 1000 1000"]').first().click({ position: { x: 50, y: 60 } });
+    
+    // The text approved is rendered inside SVG
+    await expect(page.locator('svg[viewBox="0 0 1000 1000"] text').first()).toContainText("Approved");
+    
+    // Export and download
+    await page.getByRole("button", { name: /Export & Download/i }).click();
     await expect(page.getByRole("link", { name: /Download File/i })).toBeVisible({ timeout: 15000 });
+  });
+
+  test("Mobil price list converter page renders and filters correctly", async ({ page }) => {
+    await page.goto("/mobil");
+    await expect(page.getByRole("heading", { name: "Mobil Lubricants Price Matrix" })).toBeVisible();
+    
+    // Search
+    await page.getByPlaceholder(/Search by SKU Code or Description/i).fill("Delvac 1");
+    await expect(page.getByText("MOBIL DELVAC 1 ESP 5W-40").first()).toBeVisible();
+    
+    // CSV button visible
+    await expect(page.getByRole("button", { name: "CSV Backup" })).toBeVisible();
   });
 
   test("protect requires a label then produces a download", async ({ page }) => {
     await page.goto("/pdf");
     await page.getByRole("button", { name: "Protect PDF" }).click();
     await page.locator('input[type=file]').setInputFiles({ name: "p.pdf", mimeType: "application/pdf", buffer: await pdf(1) });
-    const apply = page.getByRole("button", { name: /Apply PDF protect/i });
+    const apply = page.getByRole("button", { name: /Convert & Apply/i });
     await expect(apply).toBeDisabled(); // disabled without a label
-    await page.getByPlaceholder(/Confidential/i).fill("Internal");
+    await page.getByPlaceholder(/Password tag/i).fill("Internal");
     await apply.click();
     await expect(page.getByRole("link", { name: /Download File/i })).toBeVisible({ timeout: 15000 });
   });

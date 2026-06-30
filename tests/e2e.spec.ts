@@ -218,7 +218,7 @@ test.describe("PDF tools", () => {
       { name: "a.pdf", mimeType: "application/pdf", buffer: a },
       { name: "b.pdf", mimeType: "application/pdf", buffer: b },
     ]);
-    await page.getByRole("button", { name: /Apply PDF merge/i }).click();
+    await page.getByRole("button", { name: /Convert & Apply/i }).click();
     await expect(page.getByRole("link", { name: /Download File/i })).toBeVisible({ timeout: 15000 });
   });
 
