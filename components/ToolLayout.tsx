@@ -31,21 +31,40 @@ export default function ToolLayout({
     { id: "table-detect", name: "Table Detection", icon: Table2, path: "/table-detect" },
   ];
 
+  const siteUrl = "https://www.easytoconvert.in";
+  const currentCat = categories.find((c) => c.id === category);
+
+  const breadcrumbJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: [
+      { "@type": "ListItem", position: 1, name: "Home", item: siteUrl },
+      { "@type": "ListItem", position: 2, name: currentCat?.name ?? category, item: `${siteUrl}/${category}` },
+      { "@type": "ListItem", position: 3, name: title, item: `${siteUrl}${pathname}` },
+    ],
+  };
+
   return (
     <div className="space-y-6">
+      {/* JSON-LD structured data */}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd) }}
+      />
+
       {/* Back to Home & Breadcrumbs */}
       <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
         <Link href="/" className="flex items-center space-x-1 hover:text-primary transition-all">
           <ArrowLeft className="w-3.5 h-3.5" />
           <span>Back to Home</span>
         </Link>
-        <div className="flex items-center space-x-1.5">
-          <span>Home</span>
+        <nav aria-label="Breadcrumb" className="flex items-center space-x-1.5">
+          <Link href="/" className="hover:underline">Home</Link>
           <span>/</span>
-          <span className="capitalize">{category}</span>
+          <Link href={`/${category}`} className="hover:underline capitalize">{currentCat?.name ?? category}</Link>
           <span>/</span>
-          <span className="text-slate-800 dark:text-slate-200 truncate max-w-xs">{title}</span>
-        </div>
+          <span className="text-slate-800 dark:text-slate-200 truncate max-w-xs" aria-current="page">{title}</span>
+        </nav>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">

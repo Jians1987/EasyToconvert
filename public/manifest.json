@@ -1,0 +1,20 @@
+{
+  "name": "EasyToConvert",
+  "short_name": "EasyToConvert",
+  "description": "Free, privacy-first online tools for PDF, image, data, developer, AI and media tasks — all in your browser.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#020617",
+  "theme_color": "#020617",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/og-image.png",
+      "sizes": "1200x630",
+      "type": "image/png"
+    }
+  ],
+  "categories": ["utilities", "productivity", "developer tools"],
+  "lang": "en-IN",
+  "related_applications": []
+}
