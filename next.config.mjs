@@ -54,6 +54,14 @@ const nextConfig = {
         "onnxruntime-node": false,
       };
     }
+
+    // Ignore expected third-party module warnings to keep build logs clean
+    config.ignoreWarnings = [
+      { module: /node_modules\/@huggingface\/transformers/ },
+      { module: /node_modules\/onnxruntime-web/ },
+      { module: /node_modules\/docx/ },
+    ];
+
     return config;
   },
 };
