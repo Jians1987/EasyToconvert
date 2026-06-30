@@ -212,7 +212,7 @@ export function HomeClient() {
         </div>
       </section>
 
-      {/* 3. Core Platforms Statistics */}
+      {/* 3. Core Statistics */}
       <section className="p-8 md:p-12 rounded-2xl border border-slate-200/60 dark:border-slate-800/80 bg-white/40 dark:bg-slate-900/10 backdrop-blur-md relative overflow-hidden">
         <div className="absolute top-1/2 left-1/3 -translate-x-1/2 -translate-y-1/2 w-64 h-64 bg-purple-500/10 dark:bg-purple-500/5 rounded-full blur-[70px] pointer-events-none -z-10" />
 

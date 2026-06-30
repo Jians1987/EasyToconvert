@@ -8,7 +8,7 @@ export default function Footer() {
   return (
     <footer className="mt-auto border-t border-slate-200/50 dark:border-slate-800/50 bg-slate-100/30 dark:bg-slate-950/30 backdrop-blur-md">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-8">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
           {/* Brand Info */}
           <div className="md:col-span-2 space-y-4">
             <Link href="/" className="flex items-center space-x-2">
@@ -97,38 +97,6 @@ export default function Footer() {
               <li>
                 <Link href="/javascript" className="text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-all">
                   JS & CSS Minifier
-                </Link>
-              </li>
-            </ul>
-          </div>
-
-          {/* Column 3: Platform */}
-          <div>
-            <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-200 mb-4">Platform</h4>
-            <ul className="space-y-2 text-xs">
-              <li>
-                <Link href="https://github.com/Jians1987/EasyToconvert" className="text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-all">
-                  GitHub Source
-                </Link>
-              </li>
-              <li>
-                <Link href="/api-docs" className="text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-all">
-                  API Documentation
-                </Link>
-              </li>
-              <li>
-                <Link href="/about" className="text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-all">
-                  About Us
-                </Link>
-              </li>
-              <li>
-                <Link href="/contact" className="text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-all">
-                  Contact
-                </Link>
-              </li>
-              <li>
-                <Link href="/blog" className="text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-all">
-                  Blog
                 </Link>
               </li>
             </ul>
