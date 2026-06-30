@@ -292,34 +292,6 @@ export default function AiTools() {
           </button>
         </div>
 
-        {/* Demo Mode Badge */}
-        <div className="p-3 rounded-xl border border-indigo-500/20 bg-indigo-50/50 dark:bg-indigo-950/10 flex items-start space-x-2.5">
-          <Info className="w-4 h-4 text-indigo-500 mt-0.5 flex-shrink-0" />
-          <div className="text-xs text-indigo-700 dark:text-indigo-400 space-y-1">
-            <span className="font-bold block">Precise On-Device Extraction</span>
-            <span>The PDF Summarizer and Image OCR extract real text locally — scanned pages are recognized with Tesseract.js (WebAssembly OCR), so nothing leaves your browser. Summary/translation previews can optionally use your own API key below.</span>
-          </div>
-        </div>
-
-        {/* API Key configuration input */}
-        <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/20 space-y-3.5 max-w-md">
-          <div className="flex items-center space-x-2">
-            <Key className="w-4 h-4 text-indigo-400" />
-            <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">API Key Configuration (Optional)</h4>
-          </div>
-          <div className="flex space-x-2">
-            <input
-              type="password"
-              placeholder="Google Gemini or OpenAI key..."
-              className="flex-grow glass-input text-xs py-1.5"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-            />
-            <span className="text-[9px] border rounded px-2 py-1.5 flex items-center bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800 text-amber-600 dark:text-amber-400 font-semibold">
-              Demo
-            </span>
-          </div>
-        </div>
 
         {/* Workspaces */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
