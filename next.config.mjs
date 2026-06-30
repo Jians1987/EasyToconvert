@@ -11,7 +11,13 @@ const nextConfig = {
     ignoreBuildErrors: true,
   },
   experimental: {
-    serverComponentsExternalPackages: ["onnxruntime-node", "@huggingface/transformers"],
+    serverComponentsExternalPackages: ["@huggingface/transformers"],
+    outputFileTracingExcludes: {
+      "**/*": [
+        "node_modules/onnxruntime-node/**/*",
+        "node_modules/@huggingface/transformers/**/*.wasm"
+      ],
+    },
   },
   webpack: (config, { isServer }) => {
     // Enable async WebAssembly for ONNX Runtime Web (used by @huggingface/transformers)
