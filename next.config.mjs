@@ -27,6 +27,15 @@ const nextConfig = {
       loader: "ignore-loader",
     });
 
+    // Prevent Webpack/Terser from crashing on import.meta in .mjs files (like onnxruntime-web)
+    config.module.rules.push({
+      test: /\.m?js$/,
+      type: "javascript/auto",
+      resolve: {
+        fullySpecified: false,
+      },
+    });
+
     // Prevent Node.js-only modules from being bundled for the browser
     if (!isServer) {
       config.resolve.fallback = {
