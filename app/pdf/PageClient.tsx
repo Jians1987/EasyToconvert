@@ -6,7 +6,7 @@ import Dropzone from "@/components/Dropzone";
 import { useConversions } from "@/app/providers";
 import { ocrImage } from "@/app/lib/ocr";
 import { extractTables, type PdfTextItem } from "@/app/lib/tableExtractor";
-import { PDFDocument, degrees, rgb, StandardFonts } from "pdf-lib";
+import { PDFDocument, degrees, rgb, StandardFonts } from "pdf-lib-plus-encrypt";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, BorderStyle, ImageRun } from "docx";
 import * as XLSX from "xlsx";
 import { 
@@ -797,8 +797,17 @@ export function PdfPageClient() {
         const targetFile = selectedFiles[0];
         const arrayBuffer = await targetFile.arrayBuffer();
         const doc = await PDFDocument.load(arrayBuffer, { password: inputPassword } as any);
-        doc.setKeywords(["protected", pdfPassword]);
-        doc.setSubject("Protected via Easytoconvert");
+        
+        // Use real encryption
+        (doc as any).encrypt({
+          userPassword: pdfPassword,
+          ownerPassword: pdfPassword,
+          permissions: {
+            printing: true,
+            modifying: false,
+            copying: false,
+          },
+        });
 
         const pdfBytes = await doc.save();
         const blob = new Blob([pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
