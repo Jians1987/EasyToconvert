@@ -240,6 +240,8 @@ export default function PdfTools() {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [processing, setProcessing] = useState(false);
   const [pdfPassword, setPdfPassword] = useState("");
+  const [inputPassword, setInputPassword] = useState("");
+  const [isEncrypted, setIsEncrypted] = useState(false);
   const [rotateAngle, setRotateAngle] = useState(90);
   const [splitPages, setSplitPages] = useState("1");
   const [totalPages, setTotalPages] = useState(0);
@@ -303,14 +305,21 @@ export default function PdfTools() {
     setCurrentSignatureUrl(null);
     setImageStampData(null);
 
+    // Reset encryption state for new file
+    setIsEncrypted(false);
+    setInputPassword("");
+
     if (files.length > 0 && (mode === "split" || mode === "to-image")) {
       try {
         const arrayBuffer = await files[0].arrayBuffer();
-        const doc = await PDFDocument.load(arrayBuffer);
+        const doc = await PDFDocument.load(arrayBuffer, { password: inputPassword } as any);
         const count = doc.getPageCount();
         setTotalPages(count);
         setSplitPages(`1-${count}`);
-      } catch {
+      } catch (e: any) {
+        if (e?.message?.includes("password") || e?.message?.includes("encrypt")) {
+          setIsEncrypted(true);
+        }
         setTotalPages(0);
       }
     }
@@ -319,7 +328,7 @@ export default function PdfTools() {
       try {
         const arrayBuffer = await files[0].arrayBuffer();
         const pdfjsLib = await loadPdfJs();
-        const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+        const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer), password: inputPassword }).promise;
         const rendered: { url: string; page: number }[] = [];
         
         for (let i = 1; i <= pdf.numPages; i++) {
@@ -344,9 +353,13 @@ export default function PdfTools() {
           rotation: 0
         }));
         setPageLayout(layout);
-      } catch (e) {
-        console.error("Editor preview rendering failed:", e);
-        alert("Could not render the PDF for editing. Check your connection or try another file.");
+      } catch (e: any) {
+        if (e?.message?.includes("password") || e?.message?.includes("encrypt") || e?.name === "PasswordException") {
+          setIsEncrypted(true);
+        } else {
+          console.error("Editor preview rendering failed:", e);
+          alert("Could not render the PDF for editing. Check your connection or try another file.");
+        }
       }
     }
   };
@@ -715,7 +728,7 @@ export default function PdfTools() {
         const mergedPdf = await PDFDocument.create();
         for (const file of selectedFiles) {
           const arrayBuffer = await file.arrayBuffer();
-          const doc = await PDFDocument.load(arrayBuffer);
+          const doc = await PDFDocument.load(arrayBuffer, { password: inputPassword } as any);
           const copiedPages = await mergedPdf.copyPages(doc, doc.getPageIndices());
           copiedPages.forEach((page) => mergedPdf.addPage(page));
         }
@@ -734,7 +747,7 @@ export default function PdfTools() {
       } else if (mode === "split") {
         const targetFile = selectedFiles[0];
         const arrayBuffer = await targetFile.arrayBuffer();
-        const doc = await PDFDocument.load(arrayBuffer);
+        const doc = await PDFDocument.load(arrayBuffer, { password: inputPassword } as any);
         const pageCount = doc.getPageCount();
         const pageIndices = parsePageRange(splitPages, pageCount);
 
@@ -763,7 +776,7 @@ export default function PdfTools() {
       } else if (mode === "rotate") {
         const targetFile = selectedFiles[0];
         const arrayBuffer = await targetFile.arrayBuffer();
-        const doc = await PDFDocument.load(arrayBuffer);
+        const doc = await PDFDocument.load(arrayBuffer, { password: inputPassword } as any);
         doc.getPages().forEach((page) => {
           page.setRotation(degrees((page.getRotation().angle + rotateAngle) % 360));
         });
@@ -783,7 +796,7 @@ export default function PdfTools() {
       } else if (mode === "protect") {
         const targetFile = selectedFiles[0];
         const arrayBuffer = await targetFile.arrayBuffer();
-        const doc = await PDFDocument.load(arrayBuffer);
+        const doc = await PDFDocument.load(arrayBuffer, { password: inputPassword } as any);
         doc.setKeywords(["protected", pdfPassword]);
         doc.setSubject("Protected via Easytoconvert");
 
@@ -806,7 +819,7 @@ export default function PdfTools() {
 
         if (docFidelity === "layout") {
           const pdfjsLib = await loadPdfJs();
-          const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+          const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer), password: inputPassword }).promise;
           const sectionChildren: any[] = [];
           for (let i = 1; i <= pdf.numPages; i++) {
             const page = await pdf.getPage(i);
@@ -837,7 +850,7 @@ export default function PdfTools() {
         } else {
           let paragraphs: Paragraph[] = [];
           const pdfjsLib = await loadPdfJs();
-          const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+          const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer), password: inputPassword }).promise;
           
           paragraphs.push(
             new Paragraph({
@@ -954,7 +967,7 @@ export default function PdfTools() {
         const targetFile = selectedFiles[0];
         const arrayBuffer = await targetFile.arrayBuffer();
         const pdfjsLib = await loadPdfJs();
-        const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+        const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer), password: inputPassword }).promise;
         const numPages = pdf.numPages;
         const renderedPages: { url: string; page: number }[] = [];
 
@@ -985,7 +998,7 @@ export default function PdfTools() {
         const targetFile = selectedFiles[0];
         const arrayBuffer = await targetFile.arrayBuffer();
         const pdfjsLib = await loadPdfJs();
-        const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+        const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer), password: inputPassword }).promise;
         const numPages = pdf.numPages;
         const wb = XLSX.utils.book_new();
         const useCloud = cloudEnhance && cloudApiKey.trim().length > 0;
@@ -1113,7 +1126,7 @@ export default function PdfTools() {
         // ── ADVANCED PDF EDITOR COMPILATION ──
         const targetFile = selectedFiles[0];
         const arrayBuffer = await targetFile.arrayBuffer();
-        const pdfDoc = await PDFDocument.load(arrayBuffer);
+        const pdfDoc = await PDFDocument.load(arrayBuffer, { password: inputPassword } as any);
         const outputDoc = await PDFDocument.create();
         const helveticaFont = await outputDoc.embedFont(StandardFonts.Helvetica);
 
@@ -1356,6 +1369,40 @@ export default function PdfTools() {
                 : "Drag & drop a PDF file to process"
             }
           />
+        )}
+
+        {/* Password-protected PDF unlock banner */}
+        {selectedFiles.length > 0 && isEncrypted && (
+          <div className="p-4 rounded-xl border border-amber-400/40 bg-amber-50/60 dark:bg-amber-950/20 flex flex-col space-y-3">
+            <div className="flex items-center space-x-2">
+              <svg className="w-5 h-5 text-amber-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m0 0v2m0-2h2m-2 0H10m8-6V9a6 6 0 00-12 0v2M5 21h14a2 2 0 002-2v-5a2 2 0 00-2-2H5a2 2 0 00-2 2v5a2 2 0 002 2z" />
+              </svg>
+              <span className="text-sm font-semibold text-amber-700 dark:text-amber-400">Password-Protected PDF Detected</span>
+            </div>
+            <p className="text-xs text-amber-600 dark:text-amber-500">Enter the PDF password to unlock and process it. All decryption happens locally in your browser.</p>
+            <div className="flex space-x-2 max-w-sm">
+              <input
+                type="password"
+                placeholder="Enter PDF password..."
+                className="flex-grow glass-input text-xs py-2"
+                value={inputPassword}
+                onChange={(e) => setInputPassword(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    // Re-trigger file loading with the entered password
+                    handleFilesSelected(selectedFiles);
+                  }
+                }}
+              />
+              <button
+                onClick={() => handleFilesSelected(selectedFiles)}
+                className="px-4 py-2 rounded-lg text-xs font-semibold bg-amber-500 hover:bg-amber-600 text-white transition-all"
+              >
+                Unlock
+              </button>
+            </div>
+          </div>
         )}
 
         {/* Configurations (Non-editor modes) */}
