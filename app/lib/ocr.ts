@@ -36,3 +36,93 @@ export async function ocrImage(
 export function looksScanned(text: string): boolean {
   return text.replace(/\s/g, "").length < 10;
 }
+
+/**
+ * Helper to convert OcrImage to base64 string
+ */
+async function imageToBase64(image: OcrImage): Promise<string> {
+  if (typeof image === "string") {
+    // If it's already a base64 data URL
+    if (image.startsWith("data:")) return image.split(",")[1];
+    return image;
+  }
+  
+  if (image instanceof HTMLCanvasElement) {
+    return image.toDataURL("image/png").split(",")[1];
+  }
+  
+  // File or Blob
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      resolve(result.split(",")[1]);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(image as Blob);
+  });
+}
+
+/**
+ * Recognize text using NVIDIA Nemotron OCR v2 (Cloud AI).
+ * Much higher accuracy for complex documents compared to local Tesseract.
+ */
+export async function ocrImageWithNemotron(
+  image: OcrImage,
+  onProgress?: (percent: number) => void
+): Promise<OcrResult> {
+  if (onProgress) onProgress(10); // Starting
+  
+  const b64 = await imageToBase64(image);
+  if (onProgress) onProgress(30); // Image processed
+  
+  const apiKey = "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";
+  
+  const res = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`,
+      "Accept": "application/json"
+    },
+    body: JSON.stringify({
+      model: "nvidia/nemotron-parse",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "image_url", image_url: { url: `data:image/png;base64,${b64}` } }
+          ]
+        }
+      ]
+    })
+  });
+
+  if (onProgress) onProgress(80); // Response received
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`NVIDIA API ${res.status}: ${errText.slice(0, 200)}`);
+  }
+
+  const data = await res.json();
+  if (onProgress) onProgress(100); // Done
+  
+  let markdown = "";
+  if (data.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments) {
+    markdown = data.choices[0].message.tool_calls[0].function.arguments;
+  } else if (data.choices?.[0]?.message?.content) {
+    markdown = data.choices[0].message.content;
+  }
+  
+  // Clean up any JSON string escaping if present
+  try {
+    const parsed = JSON.parse(markdown);
+    if (typeof parsed === "string") markdown = parsed;
+  } catch(e) {}
+  
+  return {
+    text: markdown.trim(),
+    confidence: 99, // Cloud API assumes high confidence
+  };
+}

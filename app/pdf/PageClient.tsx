@@ -4,7 +4,7 @@ import React, { useState, useMemo, useEffect, useRef } from "react";
 import ToolLayout from "@/components/ToolLayout";
 import Dropzone from "@/components/Dropzone";
 import { useConversions } from "@/app/providers";
-import { ocrImage } from "@/app/lib/ocr";
+import { ocrImage, ocrImageWithNemotron } from "@/app/lib/ocr";
 import { extractTables, type PdfTextItem } from "@/app/lib/tableExtractor";
 import { PDFDocument, degrees, rgb, StandardFonts } from "pdf-lib-plus-encrypt";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, BorderStyle, ImageRun } from "docx";
@@ -946,7 +946,9 @@ export function PdfPageClient() {
                 let ocrText = "";
                 if (ctx) {
                   await page.render({ canvasContext: ctx, viewport }).promise;
-                  ocrText = (await ocrImage(canvas)).text;
+                  ocrText = cloudEnhance
+                    ? (await ocrImageWithNemotron(canvas)).text
+                    : (await ocrImage(canvas)).text;
                 }
                 if (ocrText.trim()) {
                   ocrText.split("\n").forEach((line) => {
@@ -1037,7 +1039,11 @@ export function PdfPageClient() {
         const clusterGrid = async (page: any, items: TextItem[]) => {
           if (items.length > 0) return reconstructTable(items);
           const canvas = await renderPage(page);
-          return tableFromOcrText((await ocrImage(canvas)).text);
+          return tableFromOcrText(
+            cloudEnhance 
+              ? (await ocrImageWithNemotron(canvas)).text
+              : (await ocrImage(canvas)).text
+          );
         };
 
         // Sheet-name dedupe within Excel's 31-char limit.
@@ -1493,6 +1499,26 @@ export function PdfPageClient() {
                     <span className="block text-xs font-bold text-slate-800 dark:text-slate-200">Editable Text</span>
                     <span className="block text-[10px] text-slate-400 mt-0.5">Fully selectable & editable text layout reconstruction.</span>
                   </button>
+                </div>
+                
+                <div className="pt-2">
+                  <label className="flex items-center space-x-2 text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="rounded text-indigo-500 focus:ring-indigo-500/50"
+                      checked={cloudEnhance}
+                      onChange={(e) => setCloudEnhance(e.target.checked)}
+                    />
+                    <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
+                    <span>Enhance with NVIDIA Nemotron OCR v2 (Cloud AI)</span>
+                  </label>
+                  {cloudEnhance && (
+                    <div className="mt-2 space-y-2 p-3 rounded-xl border border-amber-500/30 bg-amber-50/50 dark:bg-amber-950/10">
+                      <p className="text-[11px] text-amber-700 dark:text-amber-400 leading-relaxed">
+                        Sends scanned pages to NVIDIA's Nemotron OCR v2 model for state-of-the-art text extraction. Bypasses the local Tesseract engine.
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

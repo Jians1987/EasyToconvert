@@ -4,7 +4,7 @@ import React, { useState } from "react";
 import ToolLayout from "@/components/ToolLayout";
 import Dropzone from "@/components/Dropzone";
 import { useConversions } from "@/app/providers";
-import { ocrImage, looksScanned } from "@/app/lib/ocr";
+import { ocrImage, ocrImageWithNemotron, looksScanned } from "@/app/lib/ocr";
 import { Sparkles, Star, BrainCircuit, Key, Send, FileText, Info, ScanText } from "lucide-react";
 
 type AiMode = "summarize" | "explain" | "translate" | "ocr";
@@ -94,6 +94,7 @@ export function AiPageClient() {
   const [targetLang, setTargetLang] = useState("Spanish");
   const [ocrProgress, setOcrProgress] = useState(0);
   const [ocrStatus, setOcrStatus] = useState("");
+  const [cloudEnhance, setCloudEnhance] = useState(true); // Default to Nemotron for highest accuracy
   const { addHistoryItem, favorites, toggleFavorite } = useConversions();
 
   const handleFilesSelected = (files: File[]) => {
@@ -166,7 +167,10 @@ export function AiPageClient() {
             const ctx = canvas.getContext("2d");
             if (ctx) {
               await page.render({ canvasContext: ctx, viewport }).promise;
-              const { text: ocrText, confidence } = await ocrImage(canvas, setOcrProgress);
+              const { text: ocrText, confidence } = cloudEnhance 
+                ? await ocrImageWithNemotron(canvas, setOcrProgress)
+                : await ocrImage(canvas, setOcrProgress);
+                
               if (ocrText.trim()) {
                 ocrPagesUsed++;
                 extractedText += `\n\n--- Page ${i} (OCR · ${confidence}% confidence) ---\n\n${ocrText}`;
@@ -181,9 +185,9 @@ export function AiPageClient() {
         setOcrStatus("");
 
         const ocrNote = ocrPagesUsed > 0
-          ? `\n\n**${ocrPagesUsed} scanned page${ocrPagesUsed > 1 ? "s were" : " was"} read with on-device OCR (Tesseract.js).**`
+          ? `\n\n**${ocrPagesUsed} scanned page${ocrPagesUsed > 1 ? "s were" : " was"} read with ${cloudEnhance ? "NVIDIA Nemotron OCR v2 (Cloud AI)" : "on-device OCR (Tesseract.js)"}.**`
           : "";
-        result = `### ⚡ Precise Text Extraction\n\n**File**: ${selectedFile.name}\n**Pages**: ${numPages}\n**Size**: ${(selectedFile.size / 1024).toFixed(1)} KB${ocrNote}\n\nSelectable text was extracted with PDF.js; scanned pages were recognized locally with OCR — no data left your browser.\n\n---\n${extractedText}`;
+        result = `### ⚡ Precise Text Extraction\n\n**File**: ${selectedFile.name}\n**Pages**: ${numPages}\n**Size**: ${(selectedFile.size / 1024).toFixed(1)} KB${ocrNote}\n\nSelectable text was extracted with PDF.js; scanned pages were recognized with OCR.\n\n---\n${extractedText}`;
 
       } else if (mode === "ocr") {
         if (!selectedFile) {
@@ -192,9 +196,11 @@ export function AiPageClient() {
           return;
         }
         setOcrStatus("Recognizing text…");
-        const { text: ocrText, confidence } = await ocrImage(selectedFile, setOcrProgress);
+        const { text: ocrText, confidence } = cloudEnhance
+          ? await ocrImageWithNemotron(selectedFile, setOcrProgress)
+          : await ocrImage(selectedFile, setOcrProgress);
         setOcrStatus("");
-        result = `### 🔎 Image OCR — Extracted Text\n\n**File**: ${selectedFile.name}\n**Confidence**: ${confidence}%\n**Engine**: Tesseract.js (on-device, private)\n\n---\n\n${ocrText || "_No readable text was found in this image._"}`;
+        result = `### 🔎 Image OCR — Extracted Text\n\n**File**: ${selectedFile.name}\n**Confidence**: ${confidence}%\n**Engine**: ${cloudEnhance ? "NVIDIA Nemotron OCR v2 (Cloud AI)" : "Tesseract.js (on-device, private)"}\n\n---\n\n${ocrText || "_No readable text was found in this image._"}`;
 
       } else if (mode === "explain") {
         if (!inputText.trim()) {
@@ -363,6 +369,28 @@ export function AiPageClient() {
                     onChange={(e) => setInputText(e.target.value)}
                   />
                 </div>
+              </div>
+            )}
+
+            {(mode === "summarize" || mode === "ocr") && (
+              <div className="space-y-3">
+                <label className="flex items-center space-x-2 text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    className="rounded text-indigo-500 focus:ring-indigo-500/50"
+                    checked={cloudEnhance}
+                    onChange={(e) => setCloudEnhance(e.target.checked)}
+                  />
+                  <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
+                  <span>Enhance with NVIDIA Nemotron OCR v2 (Cloud AI)</span>
+                </label>
+                {cloudEnhance && (
+                  <div className="p-3 rounded-xl border border-amber-500/30 bg-amber-50/50 dark:bg-amber-950/10">
+                    <p className="text-[11px] text-amber-700 dark:text-amber-400 leading-relaxed">
+                      Sends the image to NVIDIA's Nemotron OCR v2 model for state-of-the-art text extraction. Bypasses the local Tesseract engine.
+                    </p>
+                  </div>
+                )}
               </div>
             )}
 
