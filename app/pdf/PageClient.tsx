@@ -17,53 +17,60 @@ import {
 
 // Cloud-AI table extraction (opt-in). Sends a page image to Claude (vision) and
 // returns a reconstructed grid. Calls the Messages API directly from the browser
-// with the user's own key.
-const extractTableWithClaude = async (apiKey: string, pngBase64: string): Promise<string[][]> => {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+// extractTableWithNemotron uses NVIDIA's Nemotron OCR v2 model to extract tables
+const extractTableWithNemotron = async (pngBase64: string): Promise<string[][]> => {
+  // Use the provided NVIDIA API key
+  const apiKey = "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";
+  
+  const res = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
     method: "POST",
     headers: {
-      "content-type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`,
+      "Accept": "application/json"
     },
     body: JSON.stringify({
-      model: "claude-opus-4-8",
-      max_tokens: 16000,
-      thinking: { type: "adaptive" },
-      system:
-        "You extract tables from page images into a JSON grid with maximum accuracy. Preserve the original row and column structure and reading order. Use an empty string for blank cells. Never invent or omit data. Respond with JSON only.",
+      model: "nvidia/nemotron-parse",
       messages: [
         {
           role: "user",
           content: [
-            { type: "image", source: { type: "base64", media_type: "image/png", data: pngBase64 } },
-            {
-              type: "text",
-              text:
-                'Extract all tabular data on this page as one combined grid. Respond with ONLY a JSON object of the form {"rows": [["cell", ...], ...]} and no other text.',
-            },
-          ],
-        },
-      ],
-    }),
+            { type: "image_url", image_url: { url: `data:image/png;base64,${pngBase64}` } }
+          ]
+        }
+      ]
+    })
   });
 
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(`Anthropic API ${res.status}: ${errText.slice(0, 200)}`);
+    throw new Error(`NVIDIA API ${res.status}: ${errText.slice(0, 200)}`);
   }
 
   const data = await res.json();
-  const textBlock = (data.content || []).find((b: any) => b.type === "text");
-  const raw = (textBlock?.text ?? "").trim();
-  const stripped = raw.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
-  const start = stripped.indexOf("{");
-  const end = stripped.lastIndexOf("}");
-  const slice = start >= 0 && end >= 0 ? stripped.slice(start, end + 1) : stripped;
-  const parsed = JSON.parse(slice);
-  const rows = Array.isArray(parsed?.rows) ? parsed.rows : [];
-  return rows.map((r: any) => (Array.isArray(r) ? r.map((c: any) => String(c ?? "")) : [String(r ?? "")]));
+  
+  // Nemotron-parse usually returns markdown table structures (sometimes in a tool call 'markdown_bbox' or directly)
+  let markdown = "";
+  if (data.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments) {
+    markdown = data.choices[0].message.tool_calls[0].function.arguments;
+  } else if (data.choices?.[0]?.message?.content) {
+    markdown = data.choices[0].message.content;
+  }
+  
+  // Parse markdown tables into a 2D grid
+  const lines = markdown.split('\n');
+  let grid: string[][] = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
+      const cells = trimmed.split('|').slice(1, -1).map(c => c.trim());
+      // Skip markdown separator lines like |---|---|
+      if (cells.every(c => c.replace(/-/g, '').trim() === '')) continue;
+      grid.push(cells);
+    }
+  }
+  
+  return grid;
 };
 
 type PdfMode = "merge" | "split" | "rotate" | "protect" | "to-doc" | "to-excel" | "to-image" | "edit";
@@ -1010,7 +1017,7 @@ export function PdfPageClient() {
         const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer), password: inputPassword }).promise;
         const numPages = pdf.numPages;
         const wb = XLSX.utils.book_new();
-        const useCloud = cloudEnhance && cloudApiKey.trim().length > 0;
+        const useCloud = cloudEnhance;
         const useTatr = !useCloud && tableEngine === "tatr";
         let cloudFailures = 0;
         setTatrProgressLabel("");
@@ -1056,12 +1063,12 @@ export function PdfPageClient() {
             .filter((it: TextItem) => it.str && it.str.trim());
 
           if (useCloud) {
-            // Cloud-Claude path: one sheet per page.
+            // Nemotron OCR path: one sheet per page.
             let grid: string[][];
             try {
               const canvas = await renderPage(page);
               const b64 = canvas.toDataURL("image/png").split(",")[1] || "";
-              grid = await extractTableWithClaude(cloudApiKey.trim(), b64);
+              grid = await extractTableWithNemotron(b64);
               if (grid.length === 0) grid = await clusterGrid(page, items);
             } catch (e) {
               cloudFailures++;
@@ -1542,21 +1549,13 @@ export function PdfPageClient() {
                     onChange={(e) => setCloudEnhance(e.target.checked)}
                   />
                   <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
-                  <span>Override: Enhance with Claude (Cloud AI) — for complex layouts</span>
+                  <span>Enhance with NVIDIA Nemotron OCR v2 (Cloud AI)</span>
                 </label>
                 {cloudEnhance && (
                   <div className="space-y-2 p-3 rounded-xl border border-amber-500/30 bg-amber-50/50 dark:bg-amber-950/10">
                     <p className="text-[11px] text-amber-700 dark:text-amber-400 leading-relaxed">
-                      Sends page screenshots to Anthropic. Requires your own API key. Bypasses the on-device engine.
+                      Sends page screenshots to NVIDIA's Nemotron OCR v2 model for state-of-the-art table extraction. Bypasses the on-device engine.
                     </p>
-                    <input
-                      type="password"
-                      placeholder="Anthropic API key (sk-ant-...)"
-                      className="w-full glass-input text-xs"
-                      value={cloudApiKey}
-                      onChange={(e) => setCloudApiKey(e.target.value)}
-                      autoComplete="off"
-                    />
                   </div>
                 )}
 
@@ -1579,7 +1578,7 @@ export function PdfPageClient() {
 
             <button
               onClick={processPdf}
-              disabled={processing || (mode === "protect" && !pdfPassword) || (mode === "to-excel" && cloudEnhance && !cloudApiKey.trim())}
+              disabled={processing || (mode === "protect" && !pdfPassword)}
               className="px-6 py-2.5 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50 transition-all flex items-center space-x-1.5 shadow-md"
             >
               <span>{processing ? "Processing..." : `Convert & Apply`}</span>
