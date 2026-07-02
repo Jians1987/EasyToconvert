@@ -73,7 +73,7 @@ const extractTableWithNemotron = async (pngBase64: string): Promise<string[][]> 
   return grid;
 };
 
-type PdfMode = "merge" | "split" | "rotate" | "protect" | "to-doc" | "to-excel" | "to-image" | "edit";
+type PdfMode = "merge" | "split" | "rotate" | "to-doc" | "to-excel" | "to-image" | "edit";
 
 interface TextItem {
   str: string;
@@ -800,34 +800,7 @@ export function PdfPageClient() {
           status: "success",
           downloadUrl: url,
         });
-      } else if (mode === "protect") {
-        const targetFile = selectedFiles[0];
-        const arrayBuffer = await targetFile.arrayBuffer();
-        const doc = await PDFDocument.load(arrayBuffer, { password: inputPassword } as any);
-        
-        // Use real encryption
-        (doc as any).encrypt({
-          userPassword: pdfPassword,
-          ownerPassword: pdfPassword,
-          permissions: {
-            printing: true,
-            modifying: false,
-            copying: false,
-          },
-        });
 
-        const pdfBytes = await doc.save();
-        const blob = new Blob([pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
-        const url = URL.createObjectURL(blob);
-        setDownloadUrl(url);
-
-        addHistoryItem({
-          fileName: `protected_${targetFile.name}`,
-          fileSize: blob.size,
-          toolType: "pdf-protect",
-          status: "success",
-          downloadUrl: url,
-        });
       } else if (mode === "to-doc") {
         const targetFile = selectedFiles[0];
         const arrayBuffer = await targetFile.arrayBuffer();
@@ -1309,7 +1282,7 @@ export function PdfPageClient() {
               { id: "merge", label: "Merge PDF" },
               { id: "split", label: "Split PDF" },
               { id: "rotate", label: "Rotate PDF" },
-              { id: "protect", label: "Protect PDF" },
+
               { id: "to-doc", label: "PDF to Word" },
               { id: "to-excel", label: "PDF to Excel" },
               { id: "to-image", label: "PDF to Image" },
@@ -1351,15 +1324,6 @@ export function PdfPageClient() {
         </div>
 
         {/* Info alerts */}
-        {mode === "protect" && (
-          <div className="p-3.5 rounded-xl border border-red-500/30 bg-red-50/50 dark:bg-red-950/10 flex items-start space-x-2.5">
-            <AlertTriangle className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
-            <div className="text-xs text-red-700 dark:text-red-400 space-y-1">
-              <span className="font-bold block">⚠ No Real Encryption — Metadata Tag Only</span>
-              <span>The password label you enter below is stored as a metadata keyword tag. Do not use for confidential files.</span>
-            </div>
-          </div>
-        )}
 
         {mode === "to-excel" && (
           <div className="p-3.5 rounded-xl border border-emerald-500/30 bg-emerald-50/50 dark:bg-emerald-950/10 flex items-start space-x-2.5">
@@ -1460,18 +1424,6 @@ export function PdfPageClient() {
               </div>
             )}
 
-            {mode === "protect" && (
-              <div className="space-y-2 max-w-md">
-                <label className="text-[10px] uppercase font-bold text-slate-400">Password Label Tag</label>
-                <input
-                  type="text"
-                  className="w-full glass-input text-xs"
-                  placeholder="Password tag string..."
-                  value={pdfPassword}
-                  onChange={(e) => setPdfPassword(e.target.value)}
-                />
-              </div>
-            )}
 
             {mode === "to-doc" && (
               <div className="space-y-3">
@@ -1604,7 +1556,7 @@ export function PdfPageClient() {
 
             <button
               onClick={processPdf}
-              disabled={processing || (mode === "protect" && !pdfPassword)}
+              disabled={processing}
               className="px-6 py-2.5 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50 transition-all flex items-center space-x-1.5 shadow-md"
             >
               <span>{processing ? "Processing..." : `Convert & Apply`}</span>
