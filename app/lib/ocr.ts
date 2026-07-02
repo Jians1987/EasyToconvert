@@ -76,53 +76,28 @@ export async function ocrImageWithNemotron(
   const b64 = await imageToBase64(image);
   if (onProgress) onProgress(30); // Image processed
   
-  const apiKey = "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";
-  
-  const res = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
+  if (onProgress) onProgress(60); // Sending to proxy
+  const res = await fetch("/api/ai", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${apiKey}`,
-      "Accept": "application/json"
     },
     body: JSON.stringify({
-      model: "nvidia/nemotron-parse",
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "image_url", image_url: { url: `data:image/png;base64,${b64}` } }
-          ]
-        }
-      ]
+      action: "nemotron-ocr",
+      imageBase64: b64
     })
   });
 
-  if (onProgress) onProgress(80); // Response received
-
   if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`NVIDIA API ${res.status}: ${errText.slice(0, 200)}`);
+    console.error("Nemotron OCR proxy failed:", await res.text());
+    throw new Error(`Nemotron OCR API Error: ${res.status}`);
   }
 
   const data = await res.json();
-  if (onProgress) onProgress(100); // Done
-  
-  let markdown = "";
-  if (data.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments) {
-    markdown = data.choices[0].message.tool_calls[0].function.arguments;
-  } else if (data.choices?.[0]?.message?.content) {
-    markdown = data.choices[0].message.content;
-  }
-  
-  // Clean up any JSON string escaping if present
-  try {
-    const parsed = JSON.parse(markdown);
-    if (typeof parsed === "string") markdown = parsed;
-  } catch(e) {}
+  if (onProgress) onProgress(100);
   
   return {
-    text: markdown.trim(),
-    confidence: 99, // Cloud API assumes high confidence
+    text: data.text || "",
+    confidence: 99, // Cloud API doesn't return confidence, assume high
   };
 }

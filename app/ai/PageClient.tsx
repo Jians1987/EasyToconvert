@@ -84,9 +84,26 @@ const loadPdfJs = (): Promise<any> => {
   });
 };
 
+async function callDeepSeekAPI(prompt: string, systemPrompt?: string) {
+  const res = await fetch("/api/ai", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action: "deepseek-chat",
+      prompt,
+      systemPrompt
+    })
+  });
+  
+  if (!res.ok) {
+    throw new Error(`DeepSeek API Error: ${res.status} ${await res.text()}`);
+  }
+  
+  return await res.json();
+}
+
 export function AiPageClient() {
   const [mode, setMode] = useState<AiMode>("summarize");
-  const [apiKey, setApiKey] = useState("");
   const [inputText, setInputText] = useState("");
   const [outputText, setOutputText] = useState("");
   const [processing, setProcessing] = useState(false);
@@ -187,7 +204,14 @@ export function AiPageClient() {
         const ocrNote = ocrPagesUsed > 0
           ? `\n\n**${ocrPagesUsed} scanned page${ocrPagesUsed > 1 ? "s were" : " was"} read with ${cloudEnhance ? "NVIDIA Nemotron OCR v2 (Cloud AI)" : "on-device OCR (Tesseract.js)"}.**`
           : "";
-        result = `### ⚡ Precise Text Extraction\n\n**File**: ${selectedFile.name}\n**Pages**: ${numPages}\n**Size**: ${(selectedFile.size / 1024).toFixed(1)} KB${ocrNote}\n\nSelectable text was extracted with PDF.js; scanned pages were recognized with OCR.\n\n---\n${extractedText}`;
+        
+        setOcrStatus("DeepSeek is thinking (reading document)...");
+        const aiResponse = await callDeepSeekAPI(
+          extractedText.substring(0, 40000), // Limit length to avoid max tokens
+          "You are an expert document summarizer. Extract the key points, main takeaways, and a concise summary of the provided text."
+        );
+
+        result = `### 📝 DeepSeek Document Summary\n\n**File**: ${selectedFile.name}\n**Pages**: ${numPages}\n**Size**: ${(selectedFile.size / 1024).toFixed(1)} KB${ocrNote}\n\n---\n\n${aiResponse.content}`;
 
       } else if (mode === "ocr") {
         if (!selectedFile) {
@@ -211,12 +235,16 @@ export function AiPageClient() {
 
         const lines = inputText.split("\n");
         const lineCount = lines.length;
-        const functionMatches = inputText.match(/function\s+\w+|const\s+\w+\s*=\s*(?:async\s+)?\(|=>\s*{/g);
-        const varMatches = inputText.match(/(?:const|let|var)\s+/g);
+        
+        setOcrStatus("DeepSeek is analyzing the code...");
+        const aiResponse = await callDeepSeekAPI(
+          inputText.substring(0, 20000),
+          "You are an expert senior software engineer. Explain the provided code clearly, concisely, and identify any potential edge cases or bugs."
+        );
 
         let numberedCode = lines.map((line, i) => `  ${(i + 1).toString().padStart(3, " ")} | ${line}`).join("\n");
 
-        result = `### ⚡ Demo Mode — Code Analysis\n\n**Statistics:**\n* **Total Lines**: ${lineCount}\n* **Functions/Arrows detected**: ${functionMatches ? functionMatches.length : 0}\n* **Variable declarations**: ${varMatches ? varMatches.length : 0}\n\nConnect a Gemini or OpenAI API key for AI-powered code explanation.\n\n---\n\n**Your code with line numbers:**\n\n\`\`\`\n${numberedCode}\n\`\`\``;
+        result = `### 🧠 DeepSeek Code Analysis\n\n**Statistics:**\n* **Total Lines**: ${lineCount}\n\n---\n\n${aiResponse.content}\n\n---\n\n**Source Code:**\n\n\`\`\`\n${numberedCode}\n\`\`\``;
 
       } else if (mode === "translate") {
         if (!inputText.trim()) {
@@ -225,7 +253,13 @@ export function AiPageClient() {
           return;
         }
 
-        result = `### ⚡ Demo Mode — Translation Preview\n\n**Target Language**: ${targetLang}\n**Input Length**: ${inputText.length} characters\n\nConnect a Gemini or OpenAI API key for real AI-powered translation.\n\n---\n\n**Original Text:**\n\n${inputText}\n\n---\n\n*Real-time translation requires an active API connection. Enter your API key above and we'll use the Gemini or OpenAI translation endpoint.*`;
+        setOcrStatus(`DeepSeek is translating to ${targetLang}...`);
+        const aiResponse = await callDeepSeekAPI(
+          inputText.substring(0, 10000),
+          `You are an expert translator. Translate the user's text into ${targetLang}. Maintain the original tone and formatting exactly. Only output the translated text and nothing else.`
+        );
+
+        result = `### 🌐 DeepSeek Translation\n\n**Target Language**: ${targetLang}\n**Input Length**: ${inputText.length} characters\n\n---\n\n${aiResponse.content}`;
       }
 
       setOutputText(result);
