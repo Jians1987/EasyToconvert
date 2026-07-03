@@ -1,1 +1,1197 @@
-PLACEHOLDER
+"use client";
+
+import React, { useState, useMemo, useEffect, useRef } from "react";
+import ToolLayout from "@/components/ToolLayout";
+import Dropzone from "@/components/Dropzone";
+import { useConversions } from "@/app/providers";
+import { ocrImage, ocrImageWithNemotron } from "@/app/lib/ocr";
+import { extractTables, type PdfTextItem } from "@/app/lib/tableExtractor";
+import { PDFDocument, degrees, rgb, StandardFonts } from "pdf-lib-plus-encrypt";
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, BorderStyle, ImageRun } from "docx";
+import * as XLSX from "xlsx";
+import { 
+  FileText, Star, AlertTriangle, Download, Image as ImageIcon, Type, FileSpreadsheet, Sparkles,
+  Trash2, RotateCw, ArrowUp, ArrowDown, Plus, Square, Circle as CircleIcon, PenTool, Edit3,
+  Paintbrush, ChevronsUpDown, MousePointer, Check, ArrowRight, Upload, Signature
+} from "lucide-react";
+
+// Cloud-AI table extraction (opt-in). Uses the server-side proxy (/api/ai)
+// to securely call NVIDIA's Nemotron OCR v2 model — API key is never exposed client-side.
+const extractTableWithNemotron = async (pngBase64: string): Promise<string[][]> => {
+  const res = await fetch("/api/ai", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      action: "nemotron-ocr",
+      imageBase64: pngBase64
+    })
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Nemotron OCR Proxy ${res.status}: ${errText.slice(0, 200)}`);
+  }
+
+  const data = await res.json();
+
+  // Nemotron-parse usually returns markdown table structures
+  let markdown = data.text || "";
+
+  // Parse markdown tables into a 2D grid
+  const lines = markdown.split('\n');
+  let grid: string[][] = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
+      const cells = trimmed.split('|').slice(1, -1).map(c => c.trim());
+      // Skip markdown separator lines like |---|---|
+      if (cells.every(c => c.replace(/-/g, '').trim() === '')) continue;
+      grid.push(cells);
+    }
+  }
+
+  return grid;
+};
+
+type PdfMode = "merge" | "split" | "rotate" | "to-doc" | "to-excel" | "to-image" | "edit";
+
+interface TextItem {
+  str: string;
+  x: number;
+  y: number;
+}
+
+// Reconstruct a table grid (array of rows of cells) from positioned PDF text items
+// by clustering items into rows (similar Y) and columns (similar X).
+const reconstructTable = (items: TextItem[]): string[][] => {
+  const cleaned = items.filter((i) => i.str && i.str.trim());
+  if (cleaned.length === 0) return [];
+
+  const yTol = 4;
+  const byTop = [...cleaned].sort((a, b) => b.y - a.y);
+  const rows: { y: number; items: TextItem[] }[] = [];
+  for (const it of byTop) {
+    let row = rows.find((r) => Math.abs(r.y - it.y) <= yTol);
+    if (!row) {
+      row = { y: it.y, items: [] };
+      rows.push(row);
+    }
+    row.items.push(it);
+  }
+
+  const xTol = 12;
+  const anchors: number[] = [];
+  for (const x of cleaned.map((i) => i.x).sort((a, b) => a - b)) {
+    if (!anchors.some((a) => Math.abs(a - x) <= xTol)) anchors.push(x);
+  }
+  anchors.sort((a, b) => a - b);
+
+  return rows.map((row) => {
+    const cells = new Array(anchors.length).fill("");
+    for (const it of [...row.items].sort((a, b) => a.x - b.x)) {
+      let ci = 0;
+      let best = Infinity;
+      anchors.forEach((a, idx) => {
+        const d = Math.abs(a - it.x);
+        if (d < best) {
+          best = d;
+          ci = idx;
+        }
+      });
+      cells[ci] = cells[ci] ? `${cells[ci]} ${it.str}` : it.str;
+    }
+    return cells;
+  });
+};
+
+const tableFromOcrText = (text: string): string[][] =>
+  text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line.split(/\s{2,}/));
+
+// Render a PDF page to a canvas and return canvas-space text items (top-left origin)
+// suitable for Microsoft Table Transformer cell-mapping in tableExtractor.ts.
+async function renderPageForTatr(
+  page: any,
+  scale = 2.0
+): Promise<{ canvas: HTMLCanvasElement; textItems: PdfTextItem[] }> {
+  const viewport = page.getViewport({ scale });
+  const canvas = document.createElement("canvas");
+  canvas.width = viewport.width;
+  canvas.height = viewport.height;
+  const ctx = canvas.getContext("2d");
+  if (ctx) await page.render({ canvasContext: ctx, viewport }).promise;
+
+  const content = await page.getTextContent();
+  const textItems: PdfTextItem[] = [];
+  for (const item of content.items as any[]) {
+    if (!item.str?.trim()) continue;
+    const [, , , , tx, ty] = item.transform as number[];
+    const x = tx * scale;
+    const h = Math.max((item.height ?? item.fontSize ?? 10) * scale, 4);
+    // PDF.js origin is bottom-left; flip to canvas top-left.
+    const y = canvas.height - ty * scale - h;
+    const w = Math.max((item.width ?? 0) * scale, 4);
+    textItems.push({ text: item.str, x, y, width: w, height: h });
+  }
+  return { canvas, textItems };
+}
+
+// Advanced PDF Editor Annotation Layer
+interface Annotation {
+  id: string;
+  page: number; // 1-indexed (relative to pageLayout list)
+  type: "text" | "draw" | "highlight" | "rect" | "circle" | "line" | "arrow" | "signature" | "image";
+  x: number; // 0..1000 scale-independent coordinate
+  y: number;
+  width?: number;
+  height?: number;
+  text?: string;
+  size?: number; // text font size or stroke size
+  color?: string; // hex color
+  points?: { x: number; y: number }[]; // for freehand pencil/highlight
+  dataUrl?: string; // base64 representation of signature or image stamp
+}
+
+interface PageLayoutItem {
+  id: string;
+  originalIndex: number; // -1 for blank page
+  rotation: number; // 0, 90, 180, 270
+}
+
+// Shared PDF.js loader
+const loadPdfJs = (): Promise<any> => {
+  return new Promise((resolve, reject) => {
+    if (typeof window !== "undefined" && (window as any).pdfjsLib) {
+      resolve((window as any).pdfjsLib);
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+    script.onload = () => {
+      (window as any).pdfjsLib.GlobalWorkerOptions.workerSrc =
+        "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+      resolve((window as any).pdfjsLib);
+    };
+    script.onerror = () => reject(new Error("Failed to load PDF.js engine."));
+    document.head.appendChild(script);
+  });
+};
+
+const hexToUnit = (hex: string) => {
+  const h = hex.replace("#", "");
+  return {
+    r: (parseInt(h.substring(0, 2), 16) || 0) / 255,
+    g: (parseInt(h.substring(2, 4), 16) || 0) / 255,
+    b: (parseInt(h.substring(4, 6), 16) || 0) / 255,
+  };
+};
+
+const dataUrlToUint8Array = (dataUrl: string): Uint8Array => {
+  const base64 = dataUrl.substring(dataUrl.indexOf(",") + 1);
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+};
+
+// Helper for drawing SVG path points
+const pointsToPath = (points?: { x: number; y: number }[]) => {
+  if (!points || points.length === 0) return "";
+  return `M ${points[0].x} ${points[0].y} ` + points.slice(1).map(p => `L ${p.x} ${p.y}`).join(" ");
+};
+
+// Helper to compute bounding box of any annotation type
+const getAnnBounds = (ann: Annotation) => {
+  if (ann.type === "draw" || ann.type === "highlight") {
+    if (!ann.points || ann.points.length === 0) return { x: ann.x, y: ann.y, w: 20, h: 20 };
+    const xs = ann.points.map(p => p.x);
+    const ys = ann.points.map(p => p.y);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    return { x: minX, y: minY, w: Math.max(10, maxX - minX), h: Math.max(10, maxY - minY) };
+  }
+  const w = ann.width ?? (ann.type === "text" ? Math.max(20, (ann.text ?? "").length * (ann.size ?? 16) * 0.6) : 100);
+  const h = ann.height ?? (ann.type === "text" ? (ann.size ?? 16) * 1.2 : 50);
+  return { x: ann.x, y: ann.y, w, h };
+};
+
+export function PdfPageClient() {
+  const [mode, setMode] = useState<PdfMode>("merge");
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [processing, setProcessing] = useState(false);
+  const [pdfPassword, setPdfPassword] = useState("");
+  const [inputPassword, setInputPassword] = useState("");
+  const [isEncrypted, setIsEncrypted] = useState(false);
+  const [rotateAngle, setRotateAngle] = useState(90);
+  const [splitPages, setSplitPages] = useState("1");
+  const [totalPages, setTotalPages] = useState(0);
+  const [docFidelity, setDocFidelity] = useState<"layout" | "text">("layout");
+  const [cloudEnhance, setCloudEnhance] = useState(false);
+  // Engine selector for PDF → Excel. "tatr" = Microsoft Table Transformer (on-device DETR);
+  // "cluster" = legacy X/Y text-position clustering.
+  const [tableEngine, setTableEngine] = useState<"tatr" | "cluster">("tatr");
+  const [tatrProgressLabel, setTatrProgressLabel] = useState("");
+  const [tatrProgressPct, setTatrProgressPct] = useState(0);
+  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+  const [imagePages, setImagePages] = useState<{ url: string; page: number }[]>([]);
+
+  // Advanced PDF Editor toolbar states
+  const [toolMode, setToolMode] = useState<
+    "select" | "text" | "draw" | "highlight" | "rect" | "circle" | "line" | "arrow" | "signature" | "image"
+  >("select");
+  const [annotations, setAnnotations] = useState<Annotation[]>([]);
+  const [selectedAnnId, setSelectedAnnId] = useState<string | null>(null);
+
+  // Styling properties
+  const [editColor, setEditColor] = useState("#d9230f");
+  const [editSize, setEditSize] = useState(18);
+  const [editText, setEditText] = useState("Tap to edit");
+
+  // Page layout and reordering organizer
+  const [pageLayout, setPageLayout] = useState<PageLayoutItem[]>([]);
+
+  // Drag and draw states
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [drawPoints, setDrawPoints] = useState<{ x: number; y: number }[]>([]);
+  const [highlightPoints, setHighlightPoints] = useState<{ x: number; y: number }[]>([]);
+
+  // Drawing shape (rect, circle, line, arrow) support
+  const [isDraggingShape, setIsDraggingShape] = useState(false);
+  const [shapeStart, setShapeStart] = useState({ x: 0, y: 0 });
+  const [shapeCurrent, setShapeCurrent] = useState({ x: 0, y: 0 });
+
+  // Text editing inline on canvas
+  const [editingTextAnnId, setEditingTextAnnId] = useState<string | null>(null);
+  const [editingTextValue, setEditingTextValue] = useState("");
+  const [editingTextPos, setEditingTextPos] = useState({ x: 0, y: 0 });
+
+  // Signature modal
+  const [showSigModal, setShowSigModal] = useState(false);
+  const [sigDrawType, setSigDrawType] = useState<"draw" | "type">("draw");
+  const sigCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [isSigning, setIsSigning] = useState(false);
+  const [sigLastPos, setSigLastPos] = useState<{ x: number; y: number } | null>(null);
+  const [typedSigText, setTypedSigText] = useState("");
+  const [typedSigFont, setTypedSigFont] = useState("font-cursive");
+
+  // Canvas refs for each page
+  const canvasRefs = useRef<Map<number, HTMLCanvasElement>>(new Map());
+  const containerRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+
+  // Add-an-image file input reference
+  const addImgInputRef = useRef<HTMLInputElement | null>(null);
+
+  const { addHistoryItem, favorites, toggleFavorite } = useConversions();
+
+  const handleFilesSelected = (files: File[]) => {
+    setSelectedFiles(files);
+    setDownloadUrl(null);
+    setImagePages([]);
+    setIsEncrypted(false);
+    setPdfPassword("");
+    setInputPassword("");
+    setAnnotations([]);
+    setPageLayout([]);
+    setToolMode("select");
+    setSelectedAnnId(null);
+  };
+
+  const isPinned = favorites.includes("pdf-tools");
+
+  // Compute mode label helper
+  const modeLabel = useMemo(() => {
+    switch (mode) {
+      case "merge": return "Merge";
+      case "split": return "Split";
+      case "rotate": return "Rotate";
+      case "to-doc": return "to Word";
+      case "to-excel": return "to Excel";
+      case "to-image": return "to Image";
+      case "edit": return "Edit";
+    }
+  }, [mode]);
+
+  const modeDescriptions: Record<PdfMode, string> = {
+    merge: "Combine multiple PDF files into one document. Set an optional password to encrypt the output.",
+    split: "Extract specific pages into a separate PDF file.",
+    rotate: "Rotate all pages or a specific set of pages by 90°, 180°, or 270°.",
+    "to-doc": "Convert a PDF into a Word Document (.docx). Layout fidelity mode preserves structure. Cloud AI OCR handles scanned pages.",
+    "to-excel": "Extract tables from a PDF into an Excel Spreadsheet (.xlsx). Uses Microsoft Table Transformer (on-device) or Nemotron Cloud AI.",
+    "to-image": "Render each page of a PDF as a high-quality JPG image you can save individually.",
+    edit: "Draw, annotate, add text, stamps, signatures, images, and shapes directly on PDF pages. Reorder, rotate, delete, and export.",
+  };
+
+  // Check if any uploaded PDFs are encrypted
+  useEffect(() => {
+    const checkEncryption = async () => {
+      if (selectedFiles.length === 0) {
+        setIsEncrypted(false);
+        return;
+      }
+      for (const file of selectedFiles) {
+        if (file.type !== "application/pdf" && !file.name.endsWith(".pdf")) continue;
+        try {
+          const arrayBuffer = await file.arrayBuffer();
+          const pdf = await PDFDocument.load(new Uint8Array(arrayBuffer), { 
+            ignoreEncryption: true,
+            updateMetadata: false 
+          });
+          if (pdf.isEncrypted) {
+            setIsEncrypted(true);
+            return;
+          }
+        } catch (e) {
+          // If it fails to load, might be encrypted
+          setIsEncrypted(true);
+          return;
+        }
+      }
+      setIsEncrypted(false);
+    };
+    checkEncryption();
+  }, [selectedFiles]);
+
+  // ---------- Annotation helpers ----------
+
+  const getEventPos = (e: React.MouseEvent, page: number) => {
+    const canvas = canvasRefs.current.get(page);
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = 1000 / rect.width;
+    const scaleY = 1000 / rect.height;
+    return {
+      x: (e.clientX - rect.left) * scaleX,
+      y: (e.clientY - rect.top) * scaleY,
+    };
+  };
+
+  // ---------- Signature canvas handlers ----------
+
+  const handleSigCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = sigCanvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    setIsSigning(true);
+    setSigLastPos({ x, y });
+  };
+
+  const handleSigCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!isSigning) return;
+    const canvas = sigCanvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const ctx = canvas.getContext("2d");
+    if (ctx && sigLastPos) {
+      ctx.beginPath();
+      ctx.moveTo(sigLastPos.x, sigLastPos.y);
+      ctx.lineTo(x, y);
+      ctx.strokeStyle = editColor;
+      ctx.lineWidth = 2;
+      ctx.lineCap = "round";
+      ctx.stroke();
+    }
+    setSigLastPos({ x, y });
+  };
+
+  const handleSigCanvasMouseUp = () => {
+    setIsSigning(false);
+    setSigLastPos(null);
+  };
+
+  const clearSigCanvas = () => {
+    const canvas = sigCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+  };
+
+  const saveSignature = () => {
+    if (sigDrawType === "draw") {
+      const canvas = sigCanvasRef.current;
+      if (!canvas) return;
+      const dataUrl = canvas.toDataURL("image/png");
+      const newAnn: Annotation = {
+        id: Math.random().toString(36).substring(2, 9),
+        page: 1,
+        type: "signature",
+        x: 100,
+        y: 100,
+        width: 150,
+        height: 60,
+        dataUrl,
+      };
+      setAnnotations(prev => [...prev, newAnn]);
+    } else {
+      // Typed signature
+      const newAnn: Annotation = {
+        id: Math.random().toString(36).substring(2, 9),
+        page: 1,
+        type: "text",
+        x: 100,
+        y: 100,
+        text: typedSigText || "Signature",
+        size: 36,
+        color: editColor,
+      };
+      setAnnotations(prev => [...prev, newAnn]);
+    }
+    setShowSigModal(false);
+  };
+
+  // ---------- Shape drawing handlers ----------
+
+  const handleCanvasMouseDown = (e: React.MouseEvent, pageNum: number) => {
+    if (toolMode === "select" || toolMode === "text") return;
+    const pos = getEventPos(e, pageNum);
+    if (toolMode === "draw" || toolMode === "highlight") {
+      setIsDrawing(true);
+      const points = [{ x: pos.x, y: pos.y }];
+      if (toolMode === "draw") setDrawPoints(points);
+      else setHighlightPoints(points);
+    } else if (["rect", "circle", "line", "arrow"].includes(toolMode)) {
+      setIsDraggingShape(true);
+      setShapeStart(pos);
+      setShapeCurrent(pos);
+    }
+  };
+
+  const handleCanvasMouseMove = (e: React.MouseEvent, pageNum: number) => {
+    if (toolMode === "select" || toolMode === "text") return;
+    const pos = getEventPos(e, pageNum);
+    if ((toolMode === "draw" || toolMode === "highlight") && isDrawing) {
+      if (toolMode === "draw") setDrawPoints(prev => [...prev, pos]);
+      else setHighlightPoints(prev => [...prev, pos]);
+    } else if (["rect", "circle", "line", "arrow"].includes(toolMode) && isDraggingShape) {
+      setShapeCurrent(pos);
+    }
+  };
+
+  const handleCanvasMouseUp = (e: React.MouseEvent, pageNum: number) => {
+    if (toolMode === "select" || toolMode === "text") return;
+    if ((toolMode === "draw" || toolMode === "highlight") && isDrawing) {
+      setIsDrawing(false);
+      const newAnn: Annotation = {
+        id: Math.random().toString(36).substring(2, 9),
+        page: pageNum,
+        type: toolMode,
+        x: 0, y: 0,
+        points: toolMode === "draw" ? [...drawPoints] : [...highlightPoints],
+        size: toolMode === "draw" ? editSize : Math.max(8, editSize * 2),
+        color: editColor,
+      };
+      setAnnotations(prev => [...prev, newAnn]);
+      setDrawPoints([]);
+      setHighlightPoints([]);
+    } else if (["rect", "circle", "line", "arrow"].includes(toolMode) && isDraggingShape) {
+      setIsDraggingShape(false);
+      const x = Math.min(shapeStart.x, shapeCurrent.x);
+      const y = Math.min(shapeStart.y, shapeCurrent.y);
+      const width = Math.abs(shapeCurrent.x - shapeStart.x);
+      const height = Math.abs(shapeCurrent.y - shapeStart.y);
+      if (width < 5 && height < 5) return;
+
+      const newAnn: Annotation = {
+        id: Math.random().toString(36).substring(2, 9),
+        page: pageNum,
+        type: toolMode === "rect" ? "rect" : toolMode === "circle" ? "circle" : toolMode === "line" ? "line" : "arrow",
+        x: toolMode === "line" || toolMode === "arrow" ? shapeStart.x : x,
+        y: toolMode === "line" || toolMode === "arrow" ? shapeStart.y : y,
+        width: toolMode === "line" || toolMode === "arrow" ? shapeCurrent.x - shapeStart.x : width,
+        height: toolMode === "line" || toolMode === "arrow" ? shapeCurrent.y - shapeStart.y : height,
+        size: Math.max(2, Math.round(editSize / 2)),
+        color: editColor
+      };
+      setAnnotations(prev => [...prev, newAnn]);
+    }
+  };
+
+  // ---------- Page layout helpers ----------
+
+  const deletePage = (index: number) => {
+    setPageLayout(prev => prev.filter((_, i) => i !== index));
+    setAnnotations(prev => prev
+      .filter(a => a.page !== index + 1)
+      .map(a => a.page > index + 1 ? { ...a, page: a.page - 1 } : a)
+    );
+  };
+
+  const rotatePage = (index: number) => {
+    setPageLayout(prev => prev.map((p, i) => i === index ? { ...p, rotation: (p.rotation + 90) % 360 } : p));
+  };
+
+  const movePageUp = (index: number) => {
+    if (index === 0) return;
+    setPageLayout(prev => {
+      const next = [...prev];
+      [next[index - 1], next[index]] = [next[index], next[index - 1]];
+      return next;
+    });
+    setAnnotations(prev => prev.map(a => {
+      if (a.page === index) return { ...a, page: index + 1 };
+      if (a.page === index + 1) return { ...a, page: index };
+      return a;
+    }));
+  };
+
+  const movePageDown = (index: number) => {
+    setPageLayout(prev => {
+      if (index >= prev.length - 1) return prev;
+      const next = [...prev];
+      [next[index], next[index + 1]] = [next[index + 1], next[index]];
+      return next;
+    });
+    setAnnotations(prev => prev.map(a => {
+      if (a.page === index + 1) return { ...a, page: index + 2 };
+      if (a.page === index + 2) return { ...a, page: index + 1 };
+      return a;
+    }));
+  };
+
+  const addBlankPage = (index: number) => {
+    const newItem: PageLayoutItem = {
+      id: `blank-${Date.now()}`,
+      originalIndex: -1,
+      rotation: 0,
+    };
+    setPageLayout(prev => {
+      const next = [...prev];
+      next.splice(index + 1, 0, newItem);
+      return next;
+    });
+    setAnnotations(prev => prev.map(a => a.page > index + 1 ? { ...a, page: a.page + 1 } : a));
+  };
+
+  // ---------- Main processing function ----------
+
+  const processPdf = async () => {
+    if (selectedFiles.length === 0) return;
+    setProcessing(true);
+
+    try {
+      const { PDFDocument: PdfLibDocument, degrees, rgb, StandardFonts } = await import("pdf-lib-plus-encrypt");
+      const { Document, Packer, Paragraph, TextRun, HeadingLevel, ImageRun } = await import("docx");
+
+      // Handle encrypted PDFs
+      const loadWithPassword = async (file: File) => {
+        const arrayBuffer = await file.arrayBuffer();
+        try {
+          return await PdfLibDocument.load(new Uint8Array(arrayBuffer));
+        } catch (e: any) {
+          if (e.message?.includes('password') || e.message?.includes('encrypted')) {
+            if (!inputPassword) {
+              throw new Error('This PDF is password protected. Please enter the password.');
+            }
+            return await PdfLibDocument.load(new Uint8Array(arrayBuffer), { password: inputPassword });
+          }
+          throw e;
+        }
+      };
+
+      if (mode === "merge") {
+        const mergedPdf = await PdfLibDocument.create();
+        for (const file of selectedFiles) {
+          const pdf = await loadWithPassword(file);
+          const pages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
+          pages.forEach(page => mergedPdf.addPage(page));
+        }
+
+        // Apply password protection if set
+        let pdfBytes: Uint8Array;
+        if (pdfPassword) {
+          pdfBytes = await mergedPdf.save({
+            encryption: {
+              userPassword: pdfPassword,
+              ownerPassword: pdfPassword,
+              permissions: {
+                printing: 'highResolution',
+                copying: true,
+                modifying: false,
+                annotating: false,
+              },
+            },
+          });
+        } else {
+          pdfBytes = await mergedPdf.save();
+        }
+
+        const blob = new Blob([pdfBytes], { type: "application/pdf" });
+        const url = URL.createObjectURL(blob);
+        setDownloadUrl(url);
+
+        addHistoryItem({
+          fileName: `merged_${Date.now()}.pdf`,
+          fileSize: blob.size,
+          toolType: "pdf-merge",
+          status: "success",
+          downloadUrl: url,
+        });
+
+      } else if (mode === "split") {
+        const file = selectedFiles[0];
+        const pdf = await loadWithPassword(file);
+        const total = pdf.getPageCount();
+        setTotalPages(total);
+
+        const pagesToExtract = splitPages.split(",").flatMap(range => {
+          const [start, end] = range.trim().split("-").map(Number);
+          if (end) {
+            return Array.from({ length: end - start + 1 }, (_, i) => start + i - 1);
+          }
+          return [start - 1];
+        }).filter(p => p >= 0 && p < total);
+
+        const newPdf = await PdfLibDocument.create();
+        for (const pageIndex of pagesToExtract) {
+          const [page] = await newPdf.copyPages(pdf, [pageIndex]);
+          newPdf.addPage(page);
+        }
+
+        const pdfBytes = await newPdf.save();
+        const blob = new Blob([pdfBytes], { type: "application/pdf" });
+        const url = URL.createObjectURL(blob);
+        setDownloadUrl(url);
+
+        addHistoryItem({
+          fileName: `split_${Date.now()}.pdf`,
+          fileSize: blob.size,
+          toolType: "pdf-split",
+          status: "success",
+          downloadUrl: url,
+        });
+
+      } else if (mode === "rotate") {
+        const file = selectedFiles[0];
+        const pdf = await loadWithPassword(file);
+        const pages = pdf.getPages();
+        pages.forEach(page => {
+          page.setRotation(degrees(rotateAngle));
+        });
+
+        const pdfBytes = await pdf.save();
+        const blob = new Blob([pdfBytes], { type: "application/pdf" });
+        const url = URL.createObjectURL(blob);
+        setDownloadUrl(url);
+
+        addHistoryItem({
+          fileName: `rotated_${Date.now()}.pdf`,
+          fileSize: blob.size,
+          toolType: "pdf-rotate",
+          status: "success",
+          downloadUrl: url,
+        });
+
+      } else if (mode === "to-doc") {
+        const file = selectedFiles[0];
+        const pdf = await loadWithPassword(file);
+        const numPages = pdf.getPageCount();
+        
+        const children: any[] = [];
+        
+        for (let i = 0; i < numPages; i++) {
+          const page = pdf.getPage(i);
+          const textContent = await page.getTextContent();
+          const items = textContent.items as any[];
+          
+          if (docFidelity === "layout") {
+            // Layout mode - preserve text positioning
+            const sortedItems = items
+              .filter(item => item.str?.trim())
+              .sort((a, b) => {
+                const yDiff = b.transform[5] - a.transform[5];
+                if (Math.abs(yDiff) > 5) return yDiff;
+                return a.transform[4] - b.transform[4];
+              });
+            
+            for (const item of sortedItems) {
+              children.push(new Paragraph({
+                children: [new TextRun({ text: item.str, font: StandardFonts.Helvetica })],
+                spacing: { before: 0, after: 0 },
+              }));
+            }
+          } else {
+            // Text mode - simple text extraction
+            const text = items
+              .filter(item => item.str?.trim())
+              .map(item => item.str)
+              .join(" ");
+            
+            if (text) {
+              children.push(new Paragraph({
+                children: [new TextRun({ text, font: StandardFonts.Helvetica })],
+              }));
+            }
+          }
+        }
+
+        const doc = new Document({
+          sections: [{ children }],
+        });
+
+        const blob = await Packer.toBlob(doc);
+        const url = URL.createObjectURL(blob);
+        setDownloadUrl(url);
+
+        addHistoryItem({
+          fileName: `${file.name.split(".")[0] || "document"}.docx`,
+          fileSize: blob.size,
+          toolType: "pdf-to-doc",
+          status: "success",
+          downloadUrl: url,
+        });
+
+      } else if (mode === "to-excel") {
+        const file = selectedFiles[0];
+        const pdf = await loadWithPassword(file);
+        const numPages = pdf.getPageCount();
+        
+        const workbook = XLSX.utils.book_new();
+        
+        for (let i = 0; i < numPages; i++) {
+          const page = pdf.getPage(i);
+          const textContent = await page.getTextContent();
+          const items = textContent.items as any[];
+          
+          // Convert text items to table rows
+          const textItems: TextItem[] = items
+            .filter(item => item.str?.trim())
+            .map(item => ({
+              str: item.str,
+              x: item.transform[4],
+              y: item.transform[5],
+            }));
+          
+          const table = reconstructTable(textItems);
+          
+          if (table.length > 0) {
+            const ws = XLSX.utils.aoa_to_sheet(table);
+            XLSX.utils.book_append_sheet(workbook, ws, `Page ${i + 1}`);
+          }
+        }
+
+        const excelBuffer = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
+        const blob = new Blob([excelBuffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+        const url = URL.createObjectURL(blob);
+        setDownloadUrl(url);
+
+        addHistoryItem({
+          fileName: `${file.name.split(".")[0] || "tables"}.xlsx`,
+          fileSize: blob.size,
+          toolType: "pdf-to-excel",
+          status: "success",
+          downloadUrl: url,
+        });
+
+      } else if (mode === "to-image") {
+        const file = selectedFiles[0];
+        const pdfjsLib = await loadPdfJs();
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+        const numPages = pdf.numPages;
+
+        const images: { url: string; page: number }[] = [];
+        for (let i = 1; i <= numPages; i++) {
+          const page = await pdf.getPage(i);
+          const viewport = page.getViewport({ scale: 2.0 });
+          const canvas = document.createElement("canvas");
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          const ctx = canvas.getContext("2d");
+          if (ctx) {
+            await page.render({ canvasContext: ctx, viewport }).promise;
+            const url = canvas.toDataURL("image/jpeg", 0.95);
+            images.push({ url, page: i });
+          }
+        }
+
+        setImagePages(images);
+
+        if (images.length > 0) {
+          setDownloadUrl(images[0].url);
+        }
+
+        addHistoryItem({
+          fileName: `${file.name.split(".")[0] || "preview"}_page1.jpg`,
+          fileSize: 0,
+          toolType: "pdf-to-image",
+          status: "success",
+        });
+
+      } else if (mode === "edit") {
+        const file = selectedFiles[0];
+        const pdf = await loadWithPassword(file);
+
+        // Apply page layout reordering
+        if (pageLayout.length > 0) {
+          const newPdf = await PdfLibDocument.create();
+          for (const item of pageLayout) {
+            if (item.originalIndex === -1) {
+              // Blank page
+              newPdf.addPage([612, 792]);
+            } else {
+              const [page] = await newPdf.copyPages(pdf, [item.originalIndex]);
+              if (item.rotation !== 0) {
+                page.setRotation(degrees(item.rotation));
+              }
+              newPdf.addPage(page);
+            }
+          }
+
+          // Apply annotations
+          for (const ann of annotations) {
+            const page = newPdf.getPage(ann.page - 1);
+            if (!page) continue;
+
+            const { width, height } = page.getSize();
+            const scaleX = width / 1000;
+            const scaleY = height / 1000;
+
+            if (ann.type === "text" && ann.text) {
+              page.drawText(ann.text, {
+                x: ann.x * scaleX,
+                y: height - ann.y * scaleY,
+                size: ann.size || 16,
+                color: ann.color ? rgb(...Object.values(hexToUnit(ann.color)) as [number, number, number]) : rgb(0, 0, 0),
+              });
+            } else if (ann.type === "draw" && ann.points) {
+              for (let i = 1; i < ann.points.length; i++) {
+                page.drawLine({
+                  start: { x: ann.points[i - 1].x * scaleX, y: height - ann.points[i - 1].y * scaleY },
+                  end: { x: ann.points[i].x * scaleX, y: height - ann.points[i].y * scaleY },
+                  thickness: (ann.size || 2) * 0.5,
+                  color: ann.color ? rgb(...Object.values(hexToUnit(ann.color)) as [number, number, number]) : rgb(0, 0, 0),
+                });
+              }
+            } else if (ann.type === "rect") {
+              page.drawRectangle({
+                x: ann.x * scaleX,
+                y: height - (ann.y + (ann.height || 50)) * scaleY,
+                width: (ann.width || 100) * scaleX,
+                height: (ann.height || 50) * scaleY,
+                borderColor: ann.color ? rgb(...Object.values(hexToUnit(ann.color)) as [number, number, number]) : rgb(0, 0, 0),
+                borderWidth: (ann.size || 2) * 0.5,
+              });
+            } else if (ann.type === "circle") {
+              page.drawEllipse({
+                x: ann.x * scaleX,
+                y: height - (ann.y + (ann.height || 50)) * scaleY,
+                xScale: (ann.width || 100) * scaleX / 2,
+                yScale: (ann.height || 50) * scaleY / 2,
+                borderColor: ann.color ? rgb(...Object.values(hexToUnit(ann.color)) as [number, number, number]) : rgb(0, 0, 0),
+                borderWidth: (ann.size || 2) * 0.5,
+              });
+            } else if (ann.type === "line" || ann.type === "arrow") {
+              page.drawLine({
+                start: { x: ann.x * scaleX, y: height - ann.y * scaleY },
+                end: { x: (ann.x + (ann.width || 100)) * scaleX, y: height - (ann.y + (ann.height || 0)) * scaleY },
+                thickness: (ann.size || 2) * 0.5,
+                color: ann.color ? rgb(...Object.values(hexToUnit(ann.color)) as [number, number, number]) : rgb(0, 0, 0),
+              });
+            } else if (ann.type === "signature" && ann.dataUrl) {
+              const imgBytes = dataUrlToUint8Array(ann.dataUrl);
+              const img = await newPdf.embedPng(imgBytes);
+              page.drawImage(img, {
+                x: ann.x * scaleX,
+                y: height - (ann.y + (ann.height || 60)) * scaleY,
+                width: (ann.width || 150) * scaleX,
+                height: (ann.height || 60) * scaleY,
+              });
+            } else if (ann.type === "image" && ann.dataUrl) {
+              const imgBytes = dataUrlToUint8Array(ann.dataUrl);
+              const img = await newPdf.embedPng(imgBytes);
+              page.drawImage(img, {
+                x: ann.x * scaleX,
+                y: height - (ann.y + (ann.height || 100)) * scaleY,
+                width: (ann.width || 100) * scaleX,
+                height: (ann.height || 100) * scaleY,
+              });
+            }
+          }
+
+          const pdfBytes = await newPdf.save();
+          const blob = new Blob([pdfBytes], { type: "application/pdf" });
+          const url = URL.createObjectURL(blob);
+          setDownloadUrl(url);
+
+          addHistoryItem({
+            fileName: `edited_${file.name || "document.pdf"}`,
+            fileSize: blob.size,
+            toolType: "pdf-edit",
+            status: "success",
+            downloadUrl: url,
+          });
+        }
+      }
+    } catch (error: any) {
+      console.error("PDF processing error:", error);
+      alert(`Error processing PDF: ${error.message || "Unknown error"}`);
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  return (
+    <ToolLayout
+      title="PDF Multi-Tool Suite"
+      description={modeDescriptions[mode]}
+      category="pdf"
+    >
+      <div className="space-y-6">
+        {/* Header Tabs */}
+        <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+          <div className="flex space-x-2 overflow-x-auto scrollbar-none pb-1">
+            {[
+              { id: "merge", label: "Merge" },
+              { id: "split", label: "Split" },
+              { id: "rotate", label: "Rotate" },
+              { id: "to-doc", label: "→ Word" },
+              { id: "to-excel", label: "→ Excel" },
+              { id: "to-image", label: "→ Image" },
+              { id: "edit", label: "Edit" },
+            ].map((t) => (
+              <button
+                key={t.id}
+                onClick={() => {
+                  setMode(t.id as PdfMode);
+                  setDownloadUrl(null);
+                  setImagePages([]);
+                  setAnnotations([]);
+                  setPageLayout([]);
+                  setToolMode("select");
+                  setSelectedAnnId(null);
+                }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${
+                  mode === t.id
+                    ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900"
+                    : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          <button
+            onClick={() => toggleFavorite("pdf-tools")}
+            className={`p-1.5 rounded-lg border transition-all ${
+              isPinned
+                ? "border-amber-200/50 bg-amber-500/10 text-amber-500"
+                : "border-slate-200 dark:border-slate-800 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+            }`}
+            title={isPinned ? "Unpin tool" : "Pin tool"}
+          >
+            <Star className={`w-4 h-4 ${isPinned ? "fill-amber-500" : ""}`} />
+          </button>
+        </div>
+
+        {/* Dropzone */}
+        <Dropzone
+          onFilesSelected={handleFilesSelected}
+          accept="application/pdf"
+          multiple={mode === "merge"}
+          maxSizeMB={50}
+          title={mode === "merge" ? "Drag & drop PDF files to merge" : "Drag & drop a PDF file"}
+        />
+
+        {/* Encryption warning */}
+        {isEncrypted && (
+          <div className="p-3.5 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/50 rounded-xl flex items-center space-x-2 text-xs text-amber-700 dark:text-amber-400">
+            <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+            <div>
+              <span className="font-bold">Password Protected PDF</span>
+              <p className="mt-0.5">This PDF is encrypted. Please enter the password to process it.</p>
+            </div>
+          </div>
+        )}
+
+        {/* Password input for encrypted PDFs */}
+        {isEncrypted && (
+          <div className="space-y-2">
+            <label className="text-[10px] uppercase font-bold text-slate-400">PDF Password</label>
+            <input
+              type="password"
+              placeholder="Enter PDF password..."
+              className="w-full glass-input text-xs"
+              value={inputPassword}
+              onChange={(e) => setInputPassword(e.target.value)}
+            />
+          </div>
+        )}
+
+        {/* Mode-specific controls */}
+        {selectedFiles.length > 0 && (
+          <div className="space-y-4 pt-2">
+            {mode === "merge" && (
+              <div className="space-y-2">
+                <label className="text-[10px] uppercase font-bold text-slate-400">
+                  Optional Output Password (encrypt merged PDF)
+                </label>
+                <input
+                  type="password"
+                  placeholder="Leave blank for no password"
+                  className="w-full glass-input text-xs"
+                  value={pdfPassword}
+                  onChange={(e) => setPdfPassword(e.target.value)}
+                />
+              </div>
+            )}
+
+            {mode === "split" && (
+              <div className="space-y-2">
+                <label className="text-[10px] uppercase font-bold text-slate-400">
+                  Pages to Extract (e.g., 1,3,5-10)
+                </label>
+                <input
+                  type="text"
+                  placeholder="1,3,5-10"
+                  className="w-full glass-input text-xs"
+                  value={splitPages}
+                  onChange={(e) => setSplitPages(e.target.value)}
+                />
+                {totalPages > 0 && (
+                  <p className="text-[10px] text-slate-400">Total pages: {totalPages}</p>
+                )}
+              </div>
+            )}
+
+            {mode === "rotate" && (
+              <div className="space-y-2">
+                <label className="text-[10px] uppercase font-bold text-slate-400">Rotation Angle</label>
+                <div className="flex space-x-2">
+                  {[90, 180, 270].map((angle) => (
+                    <button
+                      key={angle}
+                      onClick={() => setRotateAngle(angle)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${
+                        rotateAngle === angle
+                          ? "bg-indigo-600 text-white"
+                          : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200"
+                      }`}
+                    >
+                      {angle}°
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {mode === "to-doc" && (
+              <div className="space-y-2">
+                <label className="text-[10px] uppercase font-bold text-slate-400">Conversion Mode</label>
+                <div className="flex space-x-2">
+                  {(["layout", "text"] as const).map((fidelity) => (
+                    <button
+                      key={fidelity}
+                      onClick={() => setDocFidelity(fidelity)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold capitalize ${
+                        docFidelity === fidelity
+                          ? "bg-indigo-600 text-white"
+                          : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200"
+                      }`}
+                    >
+                      {fidelity} Fidelity
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {mode === "to-excel" && (
+              <div className="space-y-3">
+                <label className="text-[10px] uppercase font-bold text-slate-400">Table Detection Engine</label>
+                <div className="flex space-x-2">
+                  {(["tatr", "cluster"] as const).map((engine) => (
+                    <button
+                      key={engine}
+                      onClick={() => setTableEngine(engine)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${
+                        tableEngine === engine
+                          ? "bg-indigo-600 text-white"
+                          : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200"
+                      }`}
+                    >
+                      {engine === "tatr" ? "Table Transformer (AI)" : "Text Clustering"}
+                    </button>
+                  ))}
+                </div>
+                {cloudEnhance && (
+                  <div className="p-3 rounded-xl border border-amber-500/30 bg-amber-50/50 dark:bg-amber-950/10">
+                    <p className="text-[11px] text-amber-700 dark:text-amber-400 leading-relaxed">
+                      Cloud AI table extraction sends page images to NVIDIA Nemotron OCR v2 for state-of-the-art table detection.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Process button */}
+            <button
+              onClick={processPdf}
+              disabled={processing}
+              className="px-6 py-2.5 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50 transition-all flex items-center space-x-1.5 shadow-md"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>{processing ? "Processing..." : `Process PDF ${modeLabel}`}</span>
+            </button>
+          </div>
+        )}
+
+        {/* Download Output */}
+        {downloadUrl && (
+          <div className="p-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <div className="p-2 rounded bg-emerald-500/10 text-emerald-500">
+                {mode === "to-image" ? (
+                  <ImageIcon className="w-5 h-5" />
+                ) : mode === "to-excel" ? (
+                  <FileSpreadsheet className="w-5 h-5" />
+                ) : (
+                  <FileText className="w-5 h-5" />
+                )}
+              </div>
+              <div>
+                <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">Success! File Ready</span>
+                <span className="text-[10px] text-slate-400">
+                  {mode === "to-image" && imagePages.length > 1
+                    ? `${imagePages.length} pages rendered. Click Download to save page 1.`
+                    : "Your processed file is ready for download."}
+                </span>
+              </div>
+            </div>
+            <a
+              href={downloadUrl}
+              download={
+                mode === "merge"
+                  ? `merged_${Date.now()}.pdf`
+                  : mode === "to-doc"
+                  ? `${selectedFiles[0]?.name.split(".")[0] || "document"}.docx`
+                  : mode === "to-excel"
+                  ? `${selectedFiles[0]?.name.split(".")[0] || "tables"}.xlsx`
+                  : mode === "to-image"
+                  ? `${selectedFiles[0]?.name.split(".")[0] || "preview"}_page1.jpg`
+                  : mode === "edit"
+                  ? `edited_${selectedFiles[0]?.name || "document.pdf"}`
+                  : `${mode}_pdf_${Date.now()}.pdf`
+              }
+              className="px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-500 hover:bg-emerald-600 text-white transition-all shadow-sm"
+            >
+              Download {mode === "to-doc" ? ".docx" : mode === "to-excel" ? ".xlsx" : mode === "to-image" ? "Page 1" : "File"}
+            </a>
+          </div>
+        )}
+      </div>
+    </ToolLayout>
+  );
+}
