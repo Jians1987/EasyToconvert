@@ -5,6 +5,8 @@ import ToolLayout from "@/components/ToolLayout";
 import Dropzone from "@/components/Dropzone";
 import { useConversions } from "@/app/providers";
 import { ocrImage, ocrImageWithNemotron } from "@/app/lib/ocr";
+import { convertPdfToDocx, type DocxProgress } from "@/app/lib/pdfToDocx";
+import { convertPdfToXlsx, type XlsxProgress, type TableEngine } from "@/app/lib/pdfToXlsx";
 import { extractTables, type PdfTextItem } from "@/app/lib/tableExtractor";
 import { PDFDocument, degrees, rgb, StandardFonts } from "pdf-lib-plus-encrypt";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, BorderStyle, ImageRun } from "docx";
@@ -695,52 +697,15 @@ export function PdfPageClient() {
 
       } else if (mode === "to-doc") {
         const file = selectedFiles[0];
-        const pdf = await loadWithPassword(file);
-        const numPages = pdf.getPageCount();
-        
-        const children: any[] = [];
-        
-        for (let i = 0; i < numPages; i++) {
-          const page = pdf.getPage(i);
-          const textContent = await page.getTextContent();
-          const items = textContent.items as any[];
-          
-          if (docFidelity === "layout") {
-            // Layout mode - preserve text positioning
-            const sortedItems = items
-              .filter(item => item.str?.trim())
-              .sort((a, b) => {
-                const yDiff = b.transform[5] - a.transform[5];
-                if (Math.abs(yDiff) > 5) return yDiff;
-                return a.transform[4] - b.transform[4];
-              });
-            
-            for (const item of sortedItems) {
-              children.push(new Paragraph({
-                children: [new TextRun({ text: item.str, font: StandardFonts.Helvetica })],
-                spacing: { before: 0, after: 0 },
-              }));
-            }
-          } else {
-            // Text mode - simple text extraction
-            const text = items
-              .filter(item => item.str?.trim())
-              .map(item => item.str)
-              .join(" ");
-            
-            if (text) {
-              children.push(new Paragraph({
-                children: [new TextRun({ text, font: StandardFonts.Helvetica })],
-              }));
-            }
+        const blob = await convertPdfToDocx(
+          file,
+          docFidelity,
+          inputPassword || undefined,
+          (p) => {
+            setTatrProgressLabel(p.message);
+            setTatrProgressPct(p.percent);
           }
-        }
-
-        const doc = new Document({
-          sections: [{ children }],
-        });
-
-        const blob = await Packer.toBlob(doc);
+        );
         const url = URL.createObjectURL(blob);
         setDownloadUrl(url);
 
@@ -754,35 +719,16 @@ export function PdfPageClient() {
 
       } else if (mode === "to-excel") {
         const file = selectedFiles[0];
-        const pdf = await loadWithPassword(file);
-        const numPages = pdf.getPageCount();
-        
-        const workbook = XLSX.utils.book_new();
-        
-        for (let i = 0; i < numPages; i++) {
-          const page = pdf.getPage(i);
-          const textContent = await page.getTextContent();
-          const items = textContent.items as any[];
-          
-          // Convert text items to table rows
-          const textItems: TextItem[] = items
-            .filter(item => item.str?.trim())
-            .map(item => ({
-              str: item.str,
-              x: item.transform[4],
-              y: item.transform[5],
-            }));
-          
-          const table = reconstructTable(textItems);
-          
-          if (table.length > 0) {
-            const ws = XLSX.utils.aoa_to_sheet(table);
-            XLSX.utils.book_append_sheet(workbook, ws, `Page ${i + 1}`);
+        const { blob, sheetCount, totalTables } = await convertPdfToXlsx(
+          file,
+          tableEngine,
+          inputPassword || undefined,
+          cloudEnhance,
+          (p) => {
+            setTatrProgressLabel(p.message);
+            setTatrProgressPct(p.percent);
           }
-        }
-
-        const excelBuffer = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
-        const blob = new Blob([excelBuffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+        );
         const url = URL.createObjectURL(blob);
         setDownloadUrl(url);
 
@@ -1105,6 +1051,21 @@ export function PdfPageClient() {
                     </button>
                   ))}
                 </div>
+                {/* Progress indicator */}
+                {processing && tatrProgressPct > 0 && (
+                  <div className="mt-2">
+                    <div className="flex justify-between text-[10px] text-slate-400 mb-1">
+                      <span>{tatrProgressLabel}</span>
+                      <span>{tatrProgressPct}%</span>
+                    </div>
+                    <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-1.5">
+                      <div
+                        className="bg-indigo-600 h-1.5 rounded-full transition-all duration-300"
+                        style={{ width: `${tatrProgressPct}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -1126,11 +1087,35 @@ export function PdfPageClient() {
                     </button>
                   ))}
                 </div>
+                <label className="flex items-center space-x-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={cloudEnhance}
+                    onChange={(e) => setCloudEnhance(e.target.checked)}
+                    className="rounded border-slate-300"
+                  />
+                  <span className="text-[10px] text-slate-500">Enable Cloud AI (Nemotron OCR) for better accuracy</span>
+                </label>
                 {cloudEnhance && (
                   <div className="p-3 rounded-xl border border-amber-500/30 bg-amber-50/50 dark:bg-amber-950/10">
                     <p className="text-[11px] text-amber-700 dark:text-amber-400 leading-relaxed">
                       Cloud AI table extraction sends page images to NVIDIA Nemotron OCR v2 for state-of-the-art table detection.
                     </p>
+                  </div>
+                )}
+                {/* Progress indicator */}
+                {processing && tatrProgressPct > 0 && (
+                  <div className="mt-2">
+                    <div className="flex justify-between text-[10px] text-slate-400 mb-1">
+                      <span>{tatrProgressLabel}</span>
+                      <span>{tatrProgressPct}%</span>
+                    </div>
+                    <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-1.5">
+                      <div
+                        className="bg-indigo-600 h-1.5 rounded-full transition-all duration-300"
+                        style={{ width: `${tatrProgressPct}%` }}
+                      />
+                    </div>
                   </div>
                 )}
               </div>
