@@ -62,6 +62,15 @@ function SafeMarkdown({ text }: { text: string }) {
     }
   }
 
+  // Handle unclosed code block — render accumulated content as code
+  if (inCode && codeBlock.length > 0) {
+    elements.push(
+      <pre key="unclosed" className="bg-slate-900 text-slate-100 p-3 rounded-lg overflow-x-auto text-[10px] my-2">
+        <code>{codeBlock.join("\n")}</code>
+      </pre>
+    );
+  }
+
   return <div className="space-y-0.5 text-xs">{elements}</div>;
 }
 

@@ -44,17 +44,25 @@ export function MediaPageClient() {
   const ensureEngine = async (): Promise<FFmpeg> => {
     if (ffmpegRef.current) return ffmpegRef.current;
     setEngineState("loading");
-    const ffmpeg = new FFmpeg();
-    ffmpeg.on("progress", ({ progress: p }) => {
-      setProgress(Math.min(100, Math.max(0, Math.round(p * 100))));
-    });
-    await ffmpeg.load({
-      coreURL: await toBlobURL(`${CORE_BASE}/ffmpeg-core.js`, "text/javascript"),
-      wasmURL: await toBlobURL(`${CORE_BASE}/ffmpeg-core.wasm`, "application/wasm"),
-    });
-    ffmpegRef.current = ffmpeg;
-    setEngineState("ready");
-    return ffmpeg;
+    try {
+      const ffmpeg = new FFmpeg();
+      ffmpeg.on("progress", ({ progress: p }) => {
+        setProgress(Math.min(100, Math.max(0, Math.round(p * 100))));
+      });
+      const [coreURL, wasmURL] = await Promise.all([
+        toBlobURL(`${CORE_BASE}/ffmpeg-core.js`, "text/javascript"),
+        toBlobURL(`${CORE_BASE}/ffmpeg-core.wasm`, "application/wasm"),
+      ]);
+      await ffmpeg.load({ coreURL, wasmURL });
+      ffmpegRef.current = ffmpeg;
+      setEngineState("ready");
+      return ffmpeg;
+    } catch (e: any) {
+      setEngineState("error");
+      throw new Error(
+        `Failed to load FFmpeg engine from CDN. ${e?.message || "Check your internet connection and try again."}`
+      );
+    }
   };
 
   const getExt = (name: string) => name.split(".").pop()?.toLowerCase() || "bin";
@@ -74,7 +82,6 @@ export function MediaPageClient() {
       let args: string[] = [];
       let outFile = "";
       let outMime = "";
-      let isVideo = false;
       const baseName = selectedFile.name.replace(/\.[^.]+$/, "");
 
       if (mode === "compress") {
@@ -107,10 +114,12 @@ export function MediaPageClient() {
       const blob = new Blob([data.buffer as ArrayBuffer], { type: outMime });
       const url = URL.createObjectURL(blob);
 
+      // Detect if output is a video file based on the output MIME type
+      const isVideoResult = outMime.startsWith("video/");
       const finalName = `${baseName}_${mode}.${outFile.split(".").pop()}`;
       setOutputUrl(url);
       setOutputName(finalName);
-      setOutputIsVideo(isVideo);
+      setOutputIsVideo(isVideoResult);
 
       addHistoryItem({
         fileName: finalName,

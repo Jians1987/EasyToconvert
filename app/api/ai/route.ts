@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 
-const NVIDIA_NEMOTRON_KEY = "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";
-const NVIDIA_DEEPSEEK_KEY = "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";
+const NVIDIA_NEMOTRON_KEY = process.env.NVIDIA_NEMOTRON_KEY || "";
+const NVIDIA_DEEPSEEK_KEY = process.env.NVIDIA_DEEPSEEK_KEY || "";
 
 // Define a size limit to prevent abuse (e.g. 5MB)
 export const maxDuration = 60; // Max execution time for Vercel
@@ -16,6 +16,9 @@ export async function POST(req: Request) {
     }
 
     if (action === "nemotron-ocr") {
+      if (!NVIDIA_NEMOTRON_KEY) {
+        return NextResponse.json({ error: "NVIDIA Nemotron API key is not configured. Set NVIDIA_NEMOTRON_KEY environment variable." }, { status: 503 });
+      }
       if (!imageBase64) {
         return NextResponse.json({ error: "Missing imageBase64" }, { status: 400 });
       }
@@ -61,6 +64,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ text: markdown.trim() });
 
     } else if (action === "deepseek-chat") {
+      if (!NVIDIA_DEEPSEEK_KEY) {
+        return NextResponse.json({ error: "NVIDIA DeepSeek API key is not configured. Set NVIDIA_DEEPSEEK_KEY environment variable." }, { status: 503 });
+      }
       if (!prompt) {
         return NextResponse.json({ error: "Missing prompt" }, { status: 400 });
       }

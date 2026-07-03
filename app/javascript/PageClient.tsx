@@ -9,7 +9,8 @@ type CodeMode = "gradient" | "shadow" | "minify" | "html-beautify";
 
 export function JavascriptPageClient() {
   const [mode, setMode] = useState<CodeMode>("gradient");
-  const [copied, setCopied] = useState(false);
+  const [copiedGradient, setCopiedGradient] = useState(false);
+  const [copiedShadow, setCopiedShadow] = useState(false);
   const { addHistoryItem, favorites, toggleFavorite } = useConversions();
 
   // Gradient Config
@@ -44,10 +45,16 @@ export function JavascriptPageClient() {
     return `box-shadow: ${hOffset}px ${vOffset}px ${blur}px ${spread}px rgba(${r}, ${g}, ${b}, ${alpha});`;
   };
 
-  const copyToClipboard = (text: string) => {
+  const copyGradientToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    setCopiedGradient(true);
+    setTimeout(() => setCopiedGradient(false), 2000);
+  };
+
+  const copyShadowToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedShadow(true);
+    setTimeout(() => setCopiedShadow(false), 2000);
   };
 
   const handleMinify = () => {
@@ -211,10 +218,10 @@ export function JavascriptPageClient() {
               <div className="p-2 rounded-lg bg-slate-900 text-slate-100 font-mono text-[10px] flex justify-between items-center">
                 <span className="truncate max-w-xs">{getGradientCss()}</span>
                 <button
-                  onClick={() => copyToClipboard(getGradientCss())}
+                  onClick={() => copyGradientToClipboard(getGradientCss())}
                   className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white"
                 >
-                  {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copiedGradient ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
                 </button>
               </div>
             </div>
@@ -312,10 +319,10 @@ export function JavascriptPageClient() {
               <div className="w-full p-2 rounded-lg bg-slate-900 text-slate-100 font-mono text-[10px] flex justify-between items-center">
                 <span className="truncate max-w-xs">{getShadowCss()}</span>
                 <button
-                  onClick={() => copyToClipboard(getShadowCss())}
+                  onClick={() => copyShadowToClipboard(getShadowCss())}
                   className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white"
                 >
-                  {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copiedShadow ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
                 </button>
               </div>
             </div>
@@ -359,11 +366,15 @@ export function JavascriptPageClient() {
                   <label className="text-[10px] uppercase font-bold text-slate-400">Output Result</label>
                   {outputText && (
                     <button
-                      onClick={() => copyToClipboard(outputText)}
+                      onClick={() => {
+                        navigator.clipboard.writeText(outputText);
+                        setCopiedGradient(true);
+                        setTimeout(() => setCopiedGradient(false), 2000);
+                      }}
                       className="text-[10px] text-slate-400 hover:text-indigo-500 flex items-center space-x-1 font-semibold"
                     >
-                      {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
-                      <span>{copied ? "Copied!" : "Copy Result"}</span>
+                      {copiedGradient ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{copiedGradient ? "Copied!" : "Copy Result"}</span>
                     </button>
                   )}
                 </div>

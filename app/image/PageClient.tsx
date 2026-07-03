@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import ToolLayout from "@/components/ToolLayout";
 import Dropzone from "@/components/Dropzone";
 import { useConversions } from "@/app/providers";
@@ -22,16 +22,27 @@ export function ImagePageClient() {
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const { addHistoryItem, favorites, toggleFavorite } = useConversions();
 
+  // Track object URL for cleanup to prevent memory leaks
+  const objectUrlRef = useRef<string | null>(null);
+
   const handleFilesSelected = (files: File[]) => {
     setSelectedFiles(files);
     setDownloadUrl(null);
     setMetadata(null);
+
+    // Cleanup previous object URL
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
+      objectUrlRef.current = null;
+    }
 
     if (files.length > 0) {
       const file = files[0];
 
       // Read image dimensions for aspect ratio support
       const img = new Image();
+      const objectUrl = URL.createObjectURL(file);
+      objectUrlRef.current = objectUrl;
       img.onload = () => {
         setOriginalDimensions({ w: img.width, h: img.height });
         setResizeWidth(img.width);
@@ -43,10 +54,26 @@ export function ImagePageClient() {
           "Dimensions": `${img.width} × ${img.height} px`,
           "Last Modified": new Date(file.lastModified).toLocaleDateString(),
         });
+        // Revoke after loading to free memory
+        URL.revokeObjectURL(objectUrl);
+        objectUrlRef.current = null;
       };
-      img.src = URL.createObjectURL(file);
+      img.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        objectUrlRef.current = null;
+      };
+      img.src = objectUrl;
     }
   };
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (objectUrlRef.current) {
+        URL.revokeObjectURL(objectUrlRef.current);
+      }
+    };
+  }, []);
 
   const handleWidthChange = (newWidth: number) => {
     setResizeWidth(newWidth);

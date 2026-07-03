@@ -6,7 +6,7 @@ import { useConversions } from "@/app/providers";
 import yaml from "js-yaml";
 import { Database, FileCode, CheckCircle, AlertCircle, Copy, Check, Star } from "lucide-react";
 
-type DataMode = "json-format" | "csv-json" | "xml-json" | "json-yaml" | "tree-view";
+type DataMode = "json-format" | "csv-json" | "xml-json" | "json-yaml";
 
 export function DataPageClient() {
   const [mode, setMode] = useState<DataMode>("json-format");

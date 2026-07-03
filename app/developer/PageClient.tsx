@@ -30,9 +30,15 @@ export function DeveloperPageClient() {
     setError(null);
     try {
       if (action === "encode") {
-        setOutputText(btoa(unescape(encodeURIComponent(inputText))));
+        // Modern Unicode-safe Base64 encoding
+        const utf8Bytes = new TextEncoder().encode(inputText);
+        const binary = Array.from(utf8Bytes, (byte) => String.fromCharCode(byte)).join("");
+        setOutputText(btoa(binary));
       } else {
-        setOutputText(decodeURIComponent(escape(atob(inputText))));
+        // Modern Unicode-safe Base64 decoding
+        const binary = atob(inputText);
+        const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+        setOutputText(new TextDecoder().decode(bytes));
       }
       addHistoryItem({
         fileName: `base64_${action}_${Date.now()}.txt`,
