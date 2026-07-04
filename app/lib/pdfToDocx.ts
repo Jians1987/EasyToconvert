@@ -22,6 +22,7 @@ import {
   BorderStyle,
   WidthType,
   AlignmentType,
+  ShadingType,
   convertInchesToTwip,
 } from "docx";
 import {
@@ -59,7 +60,7 @@ export async function convertPdfToDocx(
   // ── Phase 2: Structure detection (paragraphs, headings, tables) ─────────
   onProgress?.({ phase: "structure", message: "Analysing document structure…", percent: 30 });
 
-  const allParagraphs: Paragraph[] = [];
+  const allParagraphs: Array<Paragraph | Table> = [];
 
   for (let pageIdx = 0; pageIdx < pageItems.length; pageIdx++) {
     onProgress?.({
@@ -290,7 +291,7 @@ function gridToDocxTable(block: PdfTextBlock): Table {
             right: { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" },
           },
           shading: isHeaderRow
-            ? { fill: "F2F2F2", val: "clear" }
+            ? { fill: "F2F2F2", type: ShadingType.CLEAR }
             : undefined,
           width: { size: 100 / maxCols, type: WidthType.PERCENTAGE },
         });

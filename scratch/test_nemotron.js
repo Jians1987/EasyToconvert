@@ -1,7 +1,8 @@
 import fs from "fs";
 
 async function testNemotron() {
-    const apiKey = "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";
+    const apiKey = process.env.NVIDIA_NEMOTRON_API_KEY;
+    if (!apiKey) throw new Error("Set NVIDIA_NEMOTRON_API_KEY before running this script.");
     
     // Base64 of a simple table with "Name, Age \n Alice, 30 \n Bob, 25"
     // I will generate this base64 using canvas

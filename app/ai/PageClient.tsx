@@ -120,7 +120,7 @@ export function AiPageClient() {
   const [targetLang, setTargetLang] = useState("Spanish");
   const [ocrProgress, setOcrProgress] = useState(0);
   const [ocrStatus, setOcrStatus] = useState("");
-  const [cloudEnhance, setCloudEnhance] = useState(true); // Default to Nemotron for highest accuracy
+  const [cloudEnhance, setCloudEnhance] = useState(false); // Private on-device OCR by default
   const { addHistoryItem, favorites, toggleFavorite } = useConversions();
 
   const handleFilesSelected = (files: File[]) => {
@@ -294,7 +294,7 @@ export function AiPageClient() {
   return (
     <ToolLayout
       title="AI Productivity Suite"
-      description="Extract text from PDFs and images with on-device OCR, summarize documents, explain code, and translate text — privately in your browser."
+      description="Extract text locally with on-device OCR, or opt in to cloud AI for document summaries, code explanations, and translations."
       category="ai"
     >
       <div className="space-y-6">

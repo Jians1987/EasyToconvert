@@ -1,12 +1,9 @@
 import type { Metadata, Viewport } from "next";
-import { Inter } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import Script from "next/script";
-
-const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
 
 const siteUrl = "https://www.easytoconvert.in";
 
@@ -17,7 +14,7 @@ export const metadata: Metadata = {
     template: "%s | EasyToConvert",
   },
   description:
-    "Free, privacy-first online tools: merge/split/edit PDFs, convert images, beautify JSON & CSV, generate QR codes, run OCR, compress media, and more. No uploads — everything runs in your browser.",
+    "Free, privacy-first online tools: merge/split/edit PDFs, convert images, beautify JSON & CSV, generate QR codes, run OCR, compress media, and more. Local-first processing with clearly marked, opt-in cloud AI features.",
   keywords: [
     "free PDF converter",
     "PDF to Word",
@@ -65,7 +62,7 @@ export const metadata: Metadata = {
     siteName: "EasyToConvert",
     title: "EasyToConvert – Free Online PDF, Image & Developer Tools",
     description:
-      "Free, privacy-first online tools: merge/split/edit PDFs, convert images, beautify JSON, generate QR codes, and more. No uploads — everything runs in your browser.",
+      "Free, privacy-first online tools: merge/split/edit PDFs, convert images, beautify JSON, generate QR codes, and more. Local-first processing with clearly marked, opt-in cloud AI features.",
     images: [
       {
         url: "/og-image.png",
@@ -79,7 +76,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "EasyToConvert – Free Online PDF, Image & Developer Tools",
     description:
-      "Merge PDFs, convert images, beautify JSON, generate QR codes and more — 100% free, no uploads, runs in your browser.",
+      "Merge PDFs, convert images, beautify JSON, generate QR codes and more — 100% free, local-first processing with opt-in cloud AI.",
     images: ["/og-image.png"],
     creator: "@easytoconvert",
   },
@@ -187,7 +184,7 @@ export default function RootLayout({
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
       </head>
       <body
-        className={`${inter.variable} font-sans antialiased bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-50`}
+        className={`font-sans antialiased bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-50`}
       >
         {/* JSON-LD Structured Data */}
         <Script

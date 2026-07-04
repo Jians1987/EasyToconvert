@@ -14,5 +14,11 @@ export default defineConfig({
     permissions: ["clipboard-read", "clipboard-write"],
     trace: "off",
   },
+  webServer: {
+    command: "npm run dev",
+    url: "http://localhost:3000",
+    reuseExistingServer: true,
+    timeout: 120000,
+  },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"], channel: undefined } }],
 });

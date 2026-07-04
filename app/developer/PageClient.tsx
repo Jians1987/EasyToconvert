@@ -70,38 +70,34 @@ export function DeveloperPageClient() {
     }
   };
 
+  const secureRandomIndex = (length: number) => {
+    if (length <= 0) throw new Error("Character pool cannot be empty.");
+    const limit = Math.floor(0x1_0000_0000 / length) * length;
+    const value = new Uint32Array(1);
+    do crypto.getRandomValues(value); while (value[0] >= limit);
+    return value[0] % length;
+  };
+
   const generateUuid = (count = 5) => {
-    const list = [];
-    const hex = "0123456789abcdef";
-    for (let c = 0; c < count; c++) {
-      let r = "";
-      for (let i = 0; i < 36; i++) {
-        if (i === 8 || i === 13 || i === 18 || i === 23) {
-          r += "-";
-        } else if (i === 14) {
-          r += "4";
-        } else if (i === 19) {
-          r += hex[Math.floor(Math.random() * 4) + 8]; // must be 8, 9, a, or b (RFC 4122 variant)
-        } else {
-          r += hex[Math.floor(Math.random() * 16)];
-        }
-      }
-      list.push(r);
-    }
-    setOutputText(list.join("\n"));
+    setOutputText(Array.from({ length: count }, () => crypto.randomUUID()).join("\n"));
   };
 
   const generatePassword = () => {
-    let chars = "abcdefghijklmnopqrstuvwxyz";
-    if (includeUpper) chars += "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    if (includeNumbers) chars += "0123456789";
-    if (includeSymbols) chars += "!@#$%^&*()_+~`|}{[]:;?><,./-=";
+    const pools = ["abcdefghijklmnopqrstuvwxyz"];
+    if (includeUpper) pools.push("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+    if (includeNumbers) pools.push("0123456789");
+    if (includeSymbols) pools.push("!@#$%^&*()_+~`|}{[]:;?><,./-=");
 
-    let pass = "";
-    for (let i = 0; i < passLength; i++) {
-      pass += chars.charAt(Math.floor(Math.random() * chars.length));
+    const allCharacters = pools.join("");
+    const characters = pools.map((pool) => pool[secureRandomIndex(pool.length)]);
+    while (characters.length < passLength) {
+      characters.push(allCharacters[secureRandomIndex(allCharacters.length)]);
     }
-    setOutputText(pass);
+    for (let i = characters.length - 1; i > 0; i--) {
+      const j = secureRandomIndex(i + 1);
+      [characters[i], characters[j]] = [characters[j], characters[i]];
+    }
+    setOutputText(characters.join(""));
   };
 
   const generateQrCode = async () => {

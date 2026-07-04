@@ -1,121 +1,126 @@
-import { NextResponse } from 'next/server';
+import { NextResponse } from "next/server";
 
-const NVIDIA_NEMOTRON_KEY = process.env.NVIDIA_NEMOTRON_KEY || "";
-const NVIDIA_DEEPSEEK_KEY = process.env.NVIDIA_DEEPSEEK_KEY || "";
+const MAX_IMAGE_BASE64_LENGTH = 7_000_000;
+const MAX_PROMPT_LENGTH = 50_000;
+const MAX_SYSTEM_PROMPT_LENGTH = 4_000;
 
-// Define a size limit to prevent abuse (e.g. 5MB)
-export const maxDuration = 60; // Max execution time for Vercel
+export const maxDuration = 60;
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
-    const { action, prompt, systemPrompt, imageBase64 } = body;
+    const contentLength = Number(req.headers.get("content-length") || 0);
+    if (contentLength > MAX_IMAGE_BASE64_LENGTH + 50_000) {
+      return NextResponse.json({ error: "Request payload is too large" }, { status: 413 });
+    }
 
-    if (!action) {
+    const body: unknown = await req.json();
+    if (!body || typeof body !== "object") {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
+
+    const { action, prompt, systemPrompt, imageBase64 } = body as Record<string, unknown>;
+    if (typeof action !== "string") {
       return NextResponse.json({ error: "Missing action" }, { status: 400 });
     }
 
     if (action === "nemotron-ocr") {
-      if (!NVIDIA_NEMOTRON_KEY) {
-        return NextResponse.json({ error: "NVIDIA Nemotron API key is not configured. Set NVIDIA_NEMOTRON_KEY environment variable." }, { status: 503 });
-      }
-      if (!imageBase64) {
+      if (typeof imageBase64 !== "string" || !imageBase64) {
         return NextResponse.json({ error: "Missing imageBase64" }, { status: 400 });
+      }
+      if (imageBase64.length > MAX_IMAGE_BASE64_LENGTH) {
+        return NextResponse.json({ error: "Image is too large" }, { status: 413 });
+      }
+
+      const apiKey = process.env.NVIDIA_NEMOTRON_API_KEY;
+      if (!apiKey) {
+        return NextResponse.json({ error: "Cloud OCR is not configured" }, { status: 503 });
       }
 
       const res = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${NVIDIA_NEMOTRON_KEY}`,
-          "Accept": "application/json"
+          Authorization: `Bearer ${apiKey}`,
+          Accept: "application/json",
         },
         body: JSON.stringify({
           model: "nvidia/nemotron-parse",
-          messages: [
-            {
-              role: "user",
-              content: [
-                { type: "image_url", image_url: { url: `data:image/png;base64,${imageBase64}` } }
-              ]
-            }
-          ]
-        })
+          messages: [{ role: "user", content: [{ type: "image_url", image_url: { url: `data:image/png;base64,${imageBase64}` } }] }],
+        }),
       });
 
       if (!res.ok) {
-        const errText = await res.text();
-        return NextResponse.json({ error: `NVIDIA API ${res.status}: ${errText.slice(0, 200)}` }, { status: res.status });
+        return NextResponse.json({ error: `Cloud OCR request failed (${res.status})` }, { status: 502 });
       }
 
       const data = await res.json();
-      let markdown = "";
-      if (data.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments) {
-        markdown = data.choices[0].message.tool_calls[0].function.arguments;
-      } else if (data.choices?.[0]?.message?.content) {
-        markdown = data.choices[0].message.content;
-      }
-
+      let text = data.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments
+        ?? data.choices?.[0]?.message?.content
+        ?? "";
       try {
-        const parsed = JSON.parse(markdown);
-        if (typeof parsed === "string") markdown = parsed;
-      } catch(e) {}
+        const parsed = JSON.parse(text);
+        if (typeof parsed === "string") text = parsed;
+      } catch {}
+      return NextResponse.json({ text: String(text).trim() });
+    }
 
-      return NextResponse.json({ text: markdown.trim() });
-
-    } else if (action === "deepseek-chat") {
-      if (!NVIDIA_DEEPSEEK_KEY) {
-        return NextResponse.json({ error: "NVIDIA DeepSeek API key is not configured. Set NVIDIA_DEEPSEEK_KEY environment variable." }, { status: 503 });
-      }
-      if (!prompt) {
+    if (action === "deepseek-chat") {
+      if (typeof prompt !== "string" || !prompt) {
         return NextResponse.json({ error: "Missing prompt" }, { status: 400 });
       }
-
-      const messages = [];
-      if (systemPrompt) {
-        messages.push({ role: "system", content: systemPrompt });
+      if (prompt.length > MAX_PROMPT_LENGTH) {
+        return NextResponse.json({ error: "Prompt is too large" }, { status: 413 });
       }
+      if (systemPrompt !== undefined && typeof systemPrompt !== "string") {
+        return NextResponse.json({ error: "Invalid systemPrompt" }, { status: 400 });
+      }
+      if (typeof systemPrompt === "string" && systemPrompt.length > MAX_SYSTEM_PROMPT_LENGTH) {
+        return NextResponse.json({ error: "System prompt is too large" }, { status: 413 });
+      }
+
+      const apiKey = process.env.NVIDIA_DEEPSEEK_API_KEY;
+      if (!apiKey) {
+        return NextResponse.json({ error: "AI tools are not configured" }, { status: 503 });
+      }
+
+      const messages: Array<{ role: "system" | "user"; content: string }> = [];
+      if (typeof systemPrompt === "string" && systemPrompt) messages.push({ role: "system", content: systemPrompt });
       messages.push({ role: "user", content: prompt });
 
       const res = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${NVIDIA_DEEPSEEK_KEY}`,
-          "Accept": "application/json"
+          Authorization: `Bearer ${apiKey}`,
+          Accept: "application/json",
         },
         body: JSON.stringify({
           model: "deepseek-ai/deepseek-v4-flash",
-          messages: messages,
+          messages,
           temperature: 0.7,
           top_p: 0.95,
           max_tokens: 4000,
-          extra_body: { "chat_template_kwargs": { "thinking": true, "reasoning_effort": "high" } },
-          stream: false
-        })
+          extra_body: { chat_template_kwargs: { thinking: true, reasoning_effort: "high" } },
+          stream: false,
+        }),
       });
 
       if (!res.ok) {
-        const errText = await res.text();
-        return NextResponse.json({ error: `NVIDIA API ${res.status}: ${errText.slice(0, 200)}` }, { status: res.status });
+        return NextResponse.json({ error: `AI provider request failed (${res.status})` }, { status: 502 });
       }
 
       const data = await res.json();
-      
-      const messageObj = data.choices?.[0]?.message || {};
-      const reasoning = messageObj.reasoning || messageObj.reasoning_content || "";
-      const content = messageObj.content || "";
-
+      const message = data.choices?.[0]?.message ?? {};
       return NextResponse.json({
-        content: content.trim(),
-        reasoning: reasoning.trim()
+        content: String(message.content ?? "").trim(),
+        reasoning: String(message.reasoning ?? message.reasoning_content ?? "").trim(),
       });
-
-    } else {
-      return NextResponse.json({ error: "Invalid action" }, { status: 400 });
     }
-  } catch (error: any) {
+
+    return NextResponse.json({ error: "Invalid action" }, { status: 400 });
+  } catch (error: unknown) {
     console.error("AI Proxy Error:", error);
-    return NextResponse.json({ error: error.message || "Internal server error" }, { status: 500 });
+    const message = error instanceof SyntaxError ? "Invalid JSON body" : "Internal server error";
+    return NextResponse.json({ error: message }, { status: error instanceof SyntaxError ? 400 : 500 });
   }
 }

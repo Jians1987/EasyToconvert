@@ -10,7 +10,6 @@ import { convertPdfToXlsx, type XlsxProgress, type TableEngine } from "@/app/lib
 import { extractTables, type PdfTextItem } from "@/app/lib/tableExtractor";
 import { PDFDocument, degrees, rgb, StandardFonts } from "pdf-lib-plus-encrypt";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, BorderStyle, ImageRun } from "docx";
-import * as XLSX from "xlsx";
 import { 
   FileText, Star, AlertTriangle, Download, Image as ImageIcon, Type, FileSpreadsheet, Sparkles,
   Trash2, RotateCw, ArrowUp, ArrowDown, Plus, Square, Circle as CircleIcon, PenTool, Edit3,
@@ -47,9 +46,9 @@ const extractTableWithNemotron = async (pngBase64: string): Promise<string[][]> 
   for (const line of lines) {
     const trimmed = line.trim();
     if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
-      const cells = trimmed.split('|').slice(1, -1).map(c => c.trim());
+      const cells = trimmed.split('|').slice(1, -1).map((c: string) => c.trim());
       // Skip markdown separator lines like |---|---|
-      if (cells.every(c => c.replace(/-/g, '').trim() === '')) continue;
+      if (cells.every((c: string) => c.replace(/-/g, '').trim() === '')) continue;
       grid.push(cells);
     }
   }
@@ -294,7 +293,7 @@ export function PdfPageClient() {
 
   const { addHistoryItem, favorites, toggleFavorite } = useConversions();
 
-  const handleFilesSelected = (files: File[]) => {
+  const handleFilesSelected = async (files: File[]) => {
     setSelectedFiles(files);
     setDownloadUrl(null);
     setImagePages([]);
@@ -305,6 +304,44 @@ export function PdfPageClient() {
     setPageLayout([]);
     setToolMode("select");
     setSelectedAnnId(null);
+
+    if (files.length > 0 && mode === "edit") {
+      try {
+        const pdfjsLib = await loadPdfJs();
+        const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(await files[0].arrayBuffer()) }).promise;
+        const rendered: Array<{ url: string; page: number }> = [];
+        for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+          const page = await pdf.getPage(pageNumber);
+          const viewport = page.getViewport({ scale: 1.5 });
+          const canvas = document.createElement("canvas");
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          const context = canvas.getContext("2d");
+          if (!context) throw new Error("Canvas rendering is unavailable.");
+          await page.render({ canvasContext: context, viewport }).promise;
+          rendered.push({ url: canvas.toDataURL("image/jpeg", 0.85), page: pageNumber });
+        }
+        setImagePages(rendered);
+        setTotalPages(pdf.numPages);
+        setPageLayout(Array.from({ length: pdf.numPages }, (_, index) => ({ id: `page-${index + 1}`, originalIndex: index, rotation: 0 })));
+      } catch (error) {
+        console.error("Editor preview rendering failed:", error);
+        alert("Could not render the PDF for editing. Check your connection or try another file.");
+      }
+    }
+  };
+
+  const handleEditorClick = (event: React.MouseEvent<SVGSVGElement>, page: number) => {
+    if (toolMode !== "text") return;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const annotation: Annotation = {
+      id: crypto.randomUUID(), page, type: "text",
+      x: ((event.clientX - bounds.left) / bounds.width) * 1000,
+      y: ((event.clientY - bounds.top) / bounds.height) * 1000,
+      text: editText || "Text", size: editSize, color: editColor,
+    };
+    setAnnotations((previous) => [...previous, annotation]);
+    setSelectedAnnId(annotation.id);
   };
 
   const isPinned = favorites.includes("pdf-tools");
@@ -596,7 +633,7 @@ export function PdfPageClient() {
             if (!inputPassword) {
               throw new Error('This PDF is password protected. Please enter the password.');
             }
-            return await PdfLibDocument.load(new Uint8Array(arrayBuffer), { password: inputPassword });
+            return await PdfLibDocument.load(new Uint8Array(arrayBuffer), { password: inputPassword } as any);
           }
           throw e;
         }
@@ -613,23 +650,22 @@ export function PdfPageClient() {
         // Apply password protection if set
         let pdfBytes: Uint8Array;
         if (pdfPassword) {
-          pdfBytes = await mergedPdf.save({
-            encryption: {
-              userPassword: pdfPassword,
-              ownerPassword: pdfPassword,
-              permissions: {
-                printing: 'highResolution',
-                copying: true,
-                modifying: false,
-                annotating: false,
-              },
+          mergedPdf.encrypt({
+            userPassword: pdfPassword,
+            ownerPassword: pdfPassword,
+            permissions: {
+              printing: "highResolution",
+              copying: true,
+              modifying: false,
+              annotating: false,
             },
           });
+          pdfBytes = await mergedPdf.save();
         } else {
           pdfBytes = await mergedPdf.save();
         }
 
-        const blob = new Blob([pdfBytes], { type: "application/pdf" });
+        const blob = new Blob([pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
         const url = URL.createObjectURL(blob);
         setDownloadUrl(url);
 
@@ -655,6 +691,11 @@ export function PdfPageClient() {
           return [start - 1];
         }).filter(p => p >= 0 && p < total);
 
+        if (pagesToExtract.length === 0) {
+          alert("No valid pages selected.");
+          return;
+        }
+
         const newPdf = await PdfLibDocument.create();
         for (const pageIndex of pagesToExtract) {
           const [page] = await newPdf.copyPages(pdf, [pageIndex]);
@@ -662,7 +703,7 @@ export function PdfPageClient() {
         }
 
         const pdfBytes = await newPdf.save();
-        const blob = new Blob([pdfBytes], { type: "application/pdf" });
+        const blob = new Blob([pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
         const url = URL.createObjectURL(blob);
         setDownloadUrl(url);
 
@@ -683,7 +724,7 @@ export function PdfPageClient() {
         });
 
         const pdfBytes = await pdf.save();
-        const blob = new Blob([pdfBytes], { type: "application/pdf" });
+        const blob = new Blob([pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
         const url = URL.createObjectURL(blob);
         setDownloadUrl(url);
 
@@ -867,7 +908,7 @@ export function PdfPageClient() {
           }
 
           const pdfBytes = await newPdf.save();
-          const blob = new Blob([pdfBytes], { type: "application/pdf" });
+          const blob = new Blob([pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
           const url = URL.createObjectURL(blob);
           setDownloadUrl(url);
 
@@ -1047,7 +1088,7 @@ export function PdfPageClient() {
                           : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200"
                       }`}
                     >
-                      {fidelity} Fidelity
+                      {fidelity === "layout" ? "Exact Layout" : "Editable Text"}
                     </button>
                   ))}
                 </div>
@@ -1121,6 +1162,28 @@ export function PdfPageClient() {
               </div>
             )}
 
+            {mode === "edit" && imagePages.length > 0 && (
+              <div className="space-y-4">
+                <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 p-3 dark:border-slate-800">
+                  <button type="button" onClick={() => setToolMode("text")} className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${toolMode === "text" ? "bg-indigo-600 text-white" : "bg-slate-100 dark:bg-slate-800"}`}>Text</button>
+                  <input type="text" placeholder="Text value..." value={editText} onChange={(event) => setEditText(event.target.value)} className="glass-input min-w-48 flex-1 text-xs" />
+                  <input type="color" aria-label="Annotation color" value={editColor} onChange={(event) => setEditColor(event.target.value)} />
+                </div>
+                <div className="space-y-5">
+                  {imagePages.map((image) => (
+                    <div key={image.page} className="relative mx-auto max-w-3xl overflow-hidden rounded-lg border border-slate-200 dark:border-slate-800">
+                      <img src={image.url} alt={`Page ${image.page}`} className="block h-auto w-full" />
+                      <svg viewBox="0 0 1000 1000" preserveAspectRatio="none" className={`absolute inset-0 h-full w-full ${toolMode === "text" ? "cursor-crosshair" : "cursor-default"}`} onClick={(event) => handleEditorClick(event, image.page)}>
+                        {annotations.filter((annotation) => annotation.page === image.page).map((annotation) => annotation.type === "text" ? (
+                          <text key={annotation.id} x={annotation.x} y={annotation.y} fill={annotation.color || "#000000"} fontSize={(annotation.size || 18) * 1.5}>{annotation.text}</text>
+                        ) : null)}
+                      </svg>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Process button */}
             <button
               onClick={processPdf}
@@ -1128,7 +1191,7 @@ export function PdfPageClient() {
               className="px-6 py-2.5 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50 transition-all flex items-center space-x-1.5 shadow-md"
             >
               <Download className="w-3.5 h-3.5" />
-              <span>{processing ? "Processing..." : `Process PDF ${modeLabel}`}</span>
+              <span>{processing ? "Processing..." : mode === "edit" ? "Export & Download" : `Process PDF ${modeLabel}`}</span>
             </button>
           </div>
         )}

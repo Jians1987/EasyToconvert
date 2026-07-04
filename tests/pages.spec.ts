@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { PDFDocument, StandardFonts } from "pdf-lib";
-import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
 
 const PNG_1x1 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
@@ -13,11 +13,20 @@ async function pdf(pages = 1): Promise<Buffer> {
   return Buffer.from(await d.save());
 }
 
+async function readFirstWorksheet(data: number[]): Promise<string[][]> {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(Buffer.from(data) as any);
+  const worksheet = workbook.worksheets[0];
+  return (worksheet.getSheetValues() as ExcelJS.RowValues[]).slice(1).map((row) =>
+    (Array.isArray(row) ? row.slice(1) : []).map((value) => String(value ?? ""))
+  );
+}
+
 // ───────────── Smoke: every route renders without crashing ─────────────
 test.describe("All routes load", () => {
   const routes = [
     ["/", /Smart File Conversion/i],
-    ["/pdf", /PDF Suite Tools/i],
+    ["/pdf", /PDF Multi-Tool Suite/i],
     ["/image", /Image Studio Tools/i],
     ["/data", /Data Hub Converters/i],
     ["/developer", /Developer Utilities Core/i],
@@ -172,6 +181,11 @@ test.describe("API docs", () => {
 // ───────────── AI tools (SafeMarkdown render) ─────────────
 test.describe("AI tools", () => {
   test("code explainer renders analysis output", async ({ page }) => {
+    await page.route("**/api/ai", (route) => route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ content: "The function adds two values.", reasoning: "" }),
+    }));
     await page.goto("/ai");
     await page.getByRole("button", { name: "AI Code Explainer" }).click();
     await page.locator(inputArea).fill("function add(a,b){ return a+b; }");
@@ -180,13 +194,18 @@ test.describe("AI tools", () => {
     await expect(page.getByText(/Total Lines/i)).toBeVisible();
   });
 
-  test("translator renders translation preview", async ({ page }) => {
+  test("translator renders translation output", async ({ page }) => {
+    await page.route("**/api/ai", (route) => route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ content: "Hola mundo", reasoning: "" }),
+    }));
     await page.goto("/ai");
     await page.getByRole("button", { name: "Document Translator" }).click();
     await page.locator(inputArea).fill("Hello world");
     await page.getByRole("button", { name: /Run AI translate/i }).click();
     // scope to the output panel — the engine banner also mentions "translation previews"
-    await expect(page.locator(".prose").getByText(/Translation Preview/i)).toBeVisible();
+    await expect(page.locator(".prose").getByText(/DeepSeek Translation/i)).toBeVisible();
   });
 
   test("summarize button is disabled until a file is chosen", async ({ page }) => {
@@ -315,17 +334,17 @@ test.describe("Image modes", () => {
 test.describe("PDF modes", () => {
   test("rotate produces a download", async ({ page }) => {
     await page.goto("/pdf");
-    await page.getByRole("button", { name: "Rotate PDF" }).click();
+    await page.getByRole("button", { name: "Rotate" }).click();
     await page.locator('input[type=file]').setInputFiles({ name: "r.pdf", mimeType: "application/pdf", buffer: await pdf(1) });
-    await page.getByRole("button", { name: /Convert & Apply/i }).click();
+    await page.getByRole("button", { name: /Process PDF/i }).click();
     await expect(page.getByRole("link", { name: /Download File/i })).toBeVisible({ timeout: 15000 });
   });
 
   test("split produces a download", async ({ page }) => {
     await page.goto("/pdf");
-    await page.getByRole("button", { name: "Split PDF" }).click();
+    await page.getByRole("button", { name: "Split" }).click();
     await page.locator('input[type=file]').setInputFiles({ name: "s.pdf", mimeType: "application/pdf", buffer: await pdf(3) });
-    await page.getByRole("button", { name: /Convert & Apply/i }).click();
+    await page.getByRole("button", { name: /Process PDF/i }).click();
     await expect(page.getByRole("link", { name: /Download File/i })).toBeVisible({ timeout: 15000 });
   });
 
@@ -342,25 +361,24 @@ test.describe("PDF modes", () => {
     for (const r of rows) { for (const [t, x] of r) pg.drawText(t, { x, y, size: 12, font }); y -= 22; }
     const buf = Buffer.from(await doc.save());
 
-    await page.getByRole("button", { name: "PDF to Excel" }).click();
+    await page.getByRole("button", { name: /Excel/i }).click();
     await page.locator('input[type=file]').setInputFiles({ name: "t.pdf", mimeType: "application/pdf", buffer: buf });
-    await page.getByRole("button", { name: /Convert & Apply/i }).click();
+    await page.getByRole("button", { name: /Process PDF/i }).click();
     const dl = page.getByRole("link", { name: /Download \.xlsx/i });
     await dl.waitFor({ timeout: 20000 });
     const href = await dl.getAttribute("href");
     const arr = await page.evaluate(async (url) => Array.from(new Uint8Array(await (await fetch(url!)).arrayBuffer())), href);
-    const wb = XLSX.read(Buffer.from(arr), { type: "buffer" });
-    const grid = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
+    const grid = await readFirstWorksheet(arr);
     expect(grid).toEqual([["Name", "Age"], ["Alice", "30"]]);
   });
 
   test("PDF to Excel cloud-AI path shapes the request and uses the AI grid (stubbed)", async ({ page }) => {
     // Stub the Anthropic endpoint — no real key or network needed
-    await page.route("https://api.anthropic.com/**", async (route) => {
+    await page.route("**/api/ai", async (route) => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ content: [{ type: "text", text: '{"rows":[["Name","Total"],["Alice","42"]]}' }] }),
+        body: JSON.stringify({ text: "| Name | Total |\n| --- | --- |\n| Alice | 42 |" }),
       });
     });
     await page.goto("/pdf");
@@ -370,23 +388,21 @@ test.describe("PDF modes", () => {
     pg.drawText("X", { x: 50, y: 150, size: 12, font }); // on-device would yield a different grid
     const buf = Buffer.from(await doc.save());
 
-    await page.getByRole("button", { name: "PDF to Excel" }).click();
+    await page.getByRole("button", { name: /Excel/i }).click();
     await page.locator('input[type=file]').setInputFiles({ name: "t.pdf", mimeType: "application/pdf", buffer: buf });
     await page.getByRole("checkbox").check();
-    await page.getByPlaceholder(/Anthropic API key/i).fill("sk-ant-test");
-    await page.getByRole("button", { name: /Convert & Apply/i }).click();
+    await page.getByRole("button", { name: /Process PDF/i }).click();
     const dl = page.getByRole("link", { name: /Download \.xlsx/i });
     await dl.waitFor({ timeout: 20000 });
     const href = await dl.getAttribute("href");
     const arr = await page.evaluate(async (u) => Array.from(new Uint8Array(await (await fetch(u!)).arrayBuffer())), href);
-    const wb = XLSX.read(Buffer.from(arr), { type: "buffer" });
-    const grid = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
+    const grid = await readFirstWorksheet(arr);
     expect(grid).toEqual([["Name", "Total"], ["Alice", "42"]]); // the AI rows, not on-device "X"
   });
 
   test("PDF Editor stamps text and produces a download", async ({ page }) => {
     await page.goto("/pdf");
-    await page.getByRole("button", { name: "PDF Editor" }).click();
+    await page.getByRole("button", { name: "Edit" }).click();
     await page.locator('input[type=file]').setInputFiles({ name: "e.pdf", mimeType: "application/pdf", buffer: await pdf(1) });
     const preview = page.locator('img[alt="Page 1"]');
     await preview.waitFor({ timeout: 30000 });
@@ -418,16 +434,7 @@ test.describe("PDF modes", () => {
     await expect(page.getByRole("button", { name: "CSV Backup" })).toBeVisible();
   });
 
-  test("protect requires a label then produces a download", async ({ page }) => {
-    await page.goto("/pdf");
-    await page.getByRole("button", { name: "Protect PDF" }).click();
-    await page.locator('input[type=file]').setInputFiles({ name: "p.pdf", mimeType: "application/pdf", buffer: await pdf(1) });
-    const apply = page.getByRole("button", { name: /Convert & Apply/i });
-    await expect(apply).toBeDisabled(); // disabled without a label
-    await page.getByPlaceholder(/Password tag/i).fill("Internal");
-    await apply.click();
-    await expect(page.getByRole("link", { name: /Download File/i })).toBeVisible({ timeout: 15000 });
-  });
+
 });
 
 // ───────────── JavaScript: remaining modes ─────────────

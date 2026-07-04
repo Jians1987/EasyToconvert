@@ -25,6 +25,18 @@ export default function Dropzone({
   const [queuedFiles, setQueuedFiles] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const acceptsFile = (file: File) => {
+    if (accept === "*" || accept === "*/*") return true;
+    return accept.split(",").some((rawPattern) => {
+      const pattern = rawPattern.trim().toLowerCase();
+      const mime = file.type.toLowerCase();
+      const name = file.name.toLowerCase();
+      if (pattern.startsWith(".")) return name.endsWith(pattern);
+      if (pattern.endsWith("/*")) return mime.startsWith(pattern.slice(0, -1));
+      return mime === pattern;
+    });
+  };
+
   const processFiles = (files: FileList) => {
     setError(null);
     const validFiles: File[] = [];
@@ -32,6 +44,10 @@ export default function Dropzone({
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
+      if (!acceptsFile(file)) {
+        setError(`File ${file.name} is not an accepted file type.`);
+        continue;
+      }
       if (file.size > maxSizeBytes) {
         setError(`File ${file.name} exceeds the maximum size limit of ${maxSizeMB}MB.`);
         continue;
@@ -66,6 +82,7 @@ export default function Dropzone({
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       processFiles(e.target.files);
+      e.target.value = "";
     }
   };
 
@@ -95,6 +112,15 @@ export default function Dropzone({
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         onClick={triggerFileInput}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            triggerFileInput();
+          }
+        }}
+        role="button"
+        tabIndex={0}
+        aria-label={title}
         className={`w-full py-10 px-6 border-2 border-dashed rounded-xl cursor-pointer transition-all flex flex-col items-center justify-center text-center backdrop-blur-sm ${
           isDragActive
             ? "border-indigo-500 bg-indigo-50/10 dark:bg-indigo-950/10 scale-[1.01]"
@@ -108,6 +134,7 @@ export default function Dropzone({
           accept={accept}
           multiple={multiple}
           className="hidden"
+          aria-label="Choose files"
         />
 
         <div className="p-4 rounded-full bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-indigo-500 mb-4 animate-pulse-slow">
@@ -127,7 +154,7 @@ export default function Dropzone({
 
       {/* Error Alert */}
       {error && (
-        <div className="p-3 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/50 rounded-lg flex items-center space-x-2 text-xs text-red-600 dark:text-red-400">
+        <div role="alert" className="p-3 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/50 rounded-lg flex items-center space-x-2 text-xs text-red-600 dark:text-red-400">
           <AlertCircle className="w-4 h-4 flex-shrink-0" />
           <span>{error}</span>
         </div>
@@ -160,6 +187,7 @@ export default function Dropzone({
                     e.stopPropagation();
                     removeFile(idx);
                   }}
+                  aria-label={`Remove ${file.name}`}
                   className="p-1 rounded text-slate-400 hover:text-red-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                 >
                   <X className="w-3.5 h-3.5" />

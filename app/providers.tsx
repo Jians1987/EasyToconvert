@@ -50,7 +50,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
     } catch {
       savedTheme = null;
     }
-    if (savedTheme) {
+    if (savedTheme === "light" || savedTheme === "dark") {
       setTheme(savedTheme);
       if (savedTheme === "dark") {
         document.documentElement.classList.add("dark");
@@ -122,7 +122,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
   const addHistoryItem = (item: Omit<ConversionHistoryItem, "id" | "timestamp">) => {
     const newItem: ConversionHistoryItem = {
       ...item,
-      id: Math.random().toString(36).substring(2, 9),
+      id: crypto.randomUUID(),
       timestamp: Date.now(),
     };
     setHistory((prev) => {
@@ -134,7 +134,11 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
   const clearHistory = () => {
     setHistory([]);
-    localStorage.removeItem("conversion_history");
+    try {
+      localStorage.removeItem("conversion_history");
+    } catch (e) {
+      console.warn("Unable to clear persisted conversion history.", e);
+    }
   };
 
   const toggleFavorite = (toolId: string) => {

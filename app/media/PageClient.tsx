@@ -29,6 +29,10 @@ export function MediaPageClient() {
   const [outputName, setOutputName] = useState("output");
   const [outputIsVideo, setOutputIsVideo] = useState(false);
 
+  React.useEffect(() => () => {
+    if (outputUrl?.startsWith("blob:")) URL.revokeObjectURL(outputUrl);
+  }, [outputUrl]);
+
   const ffmpegRef = useRef<FFmpeg | null>(null);
   const { addHistoryItem, favorites, toggleFavorite } = useConversions();
 

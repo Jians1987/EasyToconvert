@@ -13,13 +13,43 @@
  *   - Multi-sheet output (one sheet per page)
  */
 
-import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
 import {
   extractPdfText,
   groupIntoLines,
   type PdfTextItem,
 } from "./pdfTextExtractor";
-import { extractTables, renderPageForTatr, type PdfTextItem as TatrTextItem } from "./tableExtractor";
+import { extractTables, type PdfTextItem as TatrTextItem } from "./tableExtractor";
+
+
+async function renderPageForTatr(
+  page: any,
+  scale = 2.0
+): Promise<{ canvas: HTMLCanvasElement; textItems: TatrTextItem[] }> {
+  const viewport = page.getViewport({ scale });
+  const canvas = document.createElement("canvas");
+  canvas.width = viewport.width;
+  canvas.height = viewport.height;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Canvas rendering is unavailable.");
+  await page.render({ canvasContext: context, viewport }).promise;
+
+  const content = await page.getTextContent();
+  const textItems: TatrTextItem[] = content.items
+    .filter((item: any) => item.str?.trim())
+    .map((item: any) => {
+      const [, , , , tx, ty] = item.transform as number[];
+      const height = Math.max((item.height ?? item.fontSize ?? 10) * scale, 4);
+      return {
+        text: item.str,
+        x: tx * scale,
+        y: canvas.height - ty * scale - height,
+        width: Math.max((item.width ?? 0) * scale, 4),
+        height,
+      };
+    });
+  return { canvas, textItems };
+}
 
 export type TableEngine = "tatr" | "cluster";
 
@@ -58,7 +88,7 @@ export async function convertPdfToXlsx(
   // Pre-extract text from all pages
   const { items: allPageItems } = await extractPdfText(file, password);
 
-  const workbook = XLSX.utils.book_new();
+  const workbook = new ExcelJS.Workbook();
   let totalTables = 0;
   let sheetCount = 0;
 
@@ -130,9 +160,9 @@ export async function convertPdfToXlsx(
           ? `Page ${pageIdx}`
           : `P${pageIdx}_T${ti + 1}`;
 
-        const ws = XLSX.utils.aoa_to_sheet(grid);
+        const ws = workbook.addWorksheet(sheetName);
+        ws.addRows(grid);
         styleWorksheet(ws, grid);
-        XLSX.utils.book_append_sheet(workbook, ws, sheetName);
         sheetCount++;
         totalTables++;
       }
@@ -152,13 +182,13 @@ export async function convertPdfToXlsx(
         if (text) allText.push([text]);
       }
     }
-    const ws = XLSX.utils.aoa_to_sheet(allText);
-    XLSX.utils.book_append_sheet(workbook, ws, "Extracted Text");
+    const ws = workbook.addWorksheet("Extracted Text");
+    ws.addRows(allText);
     sheetCount = 1;
   }
 
-  const excelBuffer = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
-  const blob = new Blob([excelBuffer], {
+  const excelBuffer = await workbook.xlsx.writeBuffer();
+  const blob = new Blob([excelBuffer as BlobPart], {
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   });
 
@@ -174,106 +204,34 @@ export async function convertPdfToXlsx(
  * Replaces the basic reconstructTable with smarter clustering.
  */
 function smartClusterTable(items: PdfTextItem[]): string[][] {
-  const cleaned = items.filter((i) => i.str?.trim());
+  const cleaned = items.filter((item) => item.str?.trim());
   if (cleaned.length === 0) return [];
-
-  // Group into rows by Y position
-  const yTol = 4;
-  const byTop = [...cleaned].sort((a, b) => b.y - a.y);
-  const rows: { y: number; items: PdfTextItem[] }[] = [];
-
-  for (const it of byTop) {
-    let row = rows.find((r) => Math.abs(r.y - it.y) <= yTol);
-    if (!row) {
-      row = { y: it.y, items: [] };
-      rows.push(row);
+  const rows: Array<{ y: number; items: PdfTextItem[] }> = [];
+  for (const item of [...cleaned].sort((a, b) => b.y - a.y)) {
+    let row = rows.find((candidate) => Math.abs(candidate.y - item.y) <= 4);
+    if (!row) { row = { y: item.y, items: [] }; rows.push(row); }
+    row.items.push(item);
+  }
+  const anchors: number[] = [];
+  for (const x of cleaned.map((item) => item.x).sort((a, b) => a - b)) {
+    if (!anchors.some((anchor) => Math.abs(anchor - x) <= 12)) anchors.push(x);
+  }
+  return rows.map((row) => {
+    const cells = new Array(anchors.length).fill("");
+    for (const item of [...row.items].sort((a, b) => a.x - b.x)) {
+      let column = 0; let distance = Number.POSITIVE_INFINITY;
+      anchors.forEach((anchor, index) => {
+        const candidate = Math.abs(anchor - item.x);
+        if (candidate < distance) { distance = candidate; column = index; }
+      });
+      cells[column] = cells[column] ? `${cells[column]} ${item.str}` : item.str;
     }
-    row.items.push(it);
-  }
-
-  // Sort items within each row left-to-right
-  for (const row of rows) {
-    row.items.sort((a, b) => a.x - b.x);
-  }
-
-  // Detect column boundaries using gap-frequency analysis
-  const allGaps: number[] = [];
-  for (const row of rows) {
-    for (let i = 1; i < row.items.length; i++) {
-      const gap = row.items[i].x - (row.items[i - 1].x + row.items[i - 1].width);
-      if (gap > 1) allGaps.push(gap);
-    }
-  }
-
-  if (allGaps.length === 0) {
-    // Single column — just return rows
-    return rows.map((r) => [r.items.map((i) => i.str).join(" ")]);
-  }
-
-  // Find the "natural" column gap threshold using frequency analysis
-  const sortedGaps = [...allGaps].sort((a, b) => a - b);
-  const gapCounts: Map<number, number> = new Map();
-  const bucketSize = Math.max(2, Math.round(sortedGaps[sortedGaps.length - 1] / 20));
-
-  for (const gap of sortedGaps) {
-    const bucket = Math.round(gap / bucketSize) * bucketSize;
-    gapCounts.set(bucket, (gapCounts.get(bucket) || 0) + 1);
-  }
-
-  // Find the most common gap bucket (represents inter-word spacing)
-  let mostCommonGap = bucketSize;
-  let maxCount = 0;
-  for (const [gap, count] of gapCounts) {
-    if (count > maxCount) {
-      maxCount = count;
-      mostCommonGap = gap;
-    }
-  }
-
-  // Column separator threshold = 2x the most common word gap
-  const colThreshold = mostCommonGap * 2;
-
-  // Build grid with dynamic column detection per row, then normalize
-  const rawRows: string[][] = [];
-  let maxCols = 0;
-
-  for (const row of rows) {
-    const cells: string[] = [];
-    let currentCell = row.items[0]?.str || "";
-
-    for (let i = 1; i < row.items.length; i++) {
-      const gap = row.items[i].x - (row.items[i - 1].x + row.items[i - 1].width);
-      if (gap > colThreshold) {
-        cells.push(currentCell);
-        currentCell = row.items[i].str;
-      } else {
-        currentCell += " " + row.items[i].str;
-      }
-    }
-    cells.push(currentCell);
-    rawRows.push(cells);
-    maxCols = Math.max(maxCols, cells.length);
-  }
-
-  // Normalize all rows to the same column count
-  const grid = rawRows.map((row) => {
-    const padded = [...row];
-    while (padded.length < maxCols) padded.push("");
-    return padded.slice(0, maxCols);
+    return cells;
   });
-
-  // Filter out rows that are almost empty (likely not table data)
-  const nonEmptyGrid = grid.filter((row) => row.some((cell) => cell.trim().length > 0));
-
-  return nonEmptyGrid.length > 0 ? nonEmptyGrid : grid;
 }
 
-// ─── Worksheet styling ──────────────────────────────────────────────────────
-
-/**
- * Apply auto-column widths and header styling to a worksheet.
- */
-function styleWorksheet(ws: XLSX.WorkSheet, grid: string[][]): void {
+/** Apply auto-column widths and header styling to a worksheet. */
+function styleWorksheet(ws: ExcelJS.Worksheet, grid: string[][]): void {
   if (!grid || grid.length === 0) return;
 
   // Auto-size columns based on content length
@@ -290,25 +248,21 @@ function styleWorksheet(ws: XLSX.WorkSheet, grid: string[][]): void {
     colWidths.push(Math.min(maxLen + 2, 50));
   }
 
-  ws["!cols"] = colWidths.map((w) => ({ wch: w }));
+  ws.columns.forEach((column, index) => {
+    column.width = colWidths[index] ?? 10;
+  });
 
   // Bold header row (first row) if it looks like headers
   const hasHeader = detectHeaderRow(grid);
   if (hasHeader && grid.length > 1) {
-    const headerRange = XLSX.utils.decode_range(ws["!ref"] || "A1");
-    for (let col = headerRange.s.c; col <= headerRange.e.c; col++) {
-      const cellRef = XLSX.utils.encode_cell({ r: 0, c: col });
-      if (ws[cellRef]) {
-        ws[cellRef].s = ws[cellRef].s || {};
-        ws[cellRef].s.font = { bold: true, sz: 11 };
-        ws[cellRef].s.fill = { patternType: "solid", fgColor: { rgb: "E8E8E8" } };
-        ws[cellRef].s.alignment = { horizontal: "center", vertical: "center" };
-      }
-    }
+    const header = ws.getRow(1);
+    header.font = { bold: true, size: 11 };
+    header.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE8E8E8" } };
+    header.alignment = { horizontal: "center", vertical: "middle" };
   }
 
   // Freeze top row
-  ws["!freeze"] = { xSplit: 0, ySplit: 1 };
+  ws.views = [{ state: "frozen", ySplit: 1 }];
 }
 
 /**
@@ -361,9 +315,9 @@ async function extractTableWithNemotron(pngBase64: string): Promise<string[][]> 
   for (const line of lines) {
     const trimmed = line.trim();
     if (trimmed.startsWith("|") && trimmed.endsWith("|")) {
-      const cells = trimmed.split("|").slice(1, -1).map((c) => c.trim());
+      const cells = trimmed.split("|").slice(1, -1).map((c: string) => c.trim());
       // Skip markdown separator lines like |---|---|
-      if (cells.every((c) => c.replace(/-/g, "").trim() === "")) continue;
+      if (cells.every((c: string) => c.replace(/-/g, "").trim() === "")) continue;
       grid.push(cells);
     }
   }

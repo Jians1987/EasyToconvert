@@ -4,20 +4,25 @@ const nextConfig = {
   images: {
     domains: ["images.unsplash.com"],
   },
-  eslint: {
-    ignoreDuringBuilds: true,
+  async headers() {
+    return [
+      {
+        source: "/(.*)",
+        headers: [
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "X-Frame-Options", value: "DENY" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+        ],
+      },
+    ];
   },
-  typescript: {
-    ignoreBuildErrors: true,
-  },
-  experimental: {
-    serverComponentsExternalPackages: ["@huggingface/transformers"],
-    outputFileTracingExcludes: {
-      "**/*": [
-        "node_modules/onnxruntime-node/**/*",
-        "node_modules/@huggingface/transformers/**/*.wasm"
-      ],
-    },
+  serverExternalPackages: ["@huggingface/transformers"],
+  outputFileTracingExcludes: {
+    "**/*": [
+      "node_modules/onnxruntime-node/**/*",
+      "node_modules/@huggingface/transformers/**/*.wasm"
+    ],
   },
   webpack: (config, { isServer }) => {
     // Enable async WebAssembly for ONNX Runtime Web (used by @huggingface/transformers)

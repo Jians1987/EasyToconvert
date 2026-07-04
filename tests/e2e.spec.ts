@@ -218,13 +218,13 @@ test.describe("PDF tools", () => {
       { name: "a.pdf", mimeType: "application/pdf", buffer: a },
       { name: "b.pdf", mimeType: "application/pdf", buffer: b },
     ]);
-    await page.getByRole("button", { name: /Convert & Apply/i }).click();
+    await page.getByRole("button", { name: /Process PDF/i }).click();
     await expect(page.getByRole("link", { name: /Download File/i })).toBeVisible({ timeout: 15000 });
   });
 
   test("PDF to Word shows fidelity toggle (new feature)", async ({ page }) => {
     await page.goto("/pdf");
-    await page.getByRole("button", { name: "PDF to Word" }).click();
+    await page.getByRole("button", { name: /Word/i }).click();
     await page.locator('input[type=file]').setInputFiles({
       name: "doc.pdf",
       mimeType: "application/pdf",

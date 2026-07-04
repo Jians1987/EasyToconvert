@@ -101,7 +101,7 @@ export default function ToolLayout({
             <div className="space-y-1">
               <span className="font-semibold text-slate-700 dark:text-slate-300">Need help?</span>
               <p className="leading-normal">
-                All files are processed securely in your browser. No data is sent to external servers. All tools are completely free with no limits.
+                Most conversion tools run in your browser. Features marked Cloud AI send only the selected content to the configured AI provider after you opt in.
               </p>
             </div>
           </div>

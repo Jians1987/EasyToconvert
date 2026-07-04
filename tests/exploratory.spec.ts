@@ -15,17 +15,17 @@ async function makePdf(pages = 1): Promise<Buffer> {
 test.describe("Edge: invalid input handling", () => {
   test("PDF split with non-numeric range warns instead of silently extracting page 1", async ({ page }) => {
     await page.goto("/pdf");
-    await page.getByRole("button", { name: "Split PDF" }).click();
+    await page.getByRole("button", { name: "Split" }).click();
     await page.locator('input[type=file]').setInputFiles({
       name: "x.pdf",
       mimeType: "application/pdf",
       buffer: await makePdf(3),
     });
-    await page.getByPlaceholder(/1-3, 5, 7-9/).fill("abc");
+    await page.getByPlaceholder(/1,3,5-10/).fill("abc");
 
     let dialogMsg = "";
     page.on("dialog", (d) => { dialogMsg = d.message(); d.dismiss(); });
-    await page.getByRole("button", { name: /Convert & Apply/i }).click();
+    await page.getByRole("button", { name: /Process PDF/i }).click();
     await expect.poll(() => dialogMsg).toMatch(/No valid pages/i);
   });
 
@@ -89,20 +89,6 @@ test.describe("Edge: messaging & safety", () => {
     await expect(page.getByText(/Coming Soon/i)).toHaveCount(0);
     await expect(page.getByText(/FFmpeg WebAssembly Engine/i)).toBeVisible();
     await expect(page.locator('input[type=file]')).toHaveCount(1);
-  });
-
-  test("PDF Protect shows the no-encryption warning and a text (not password) field", async ({ page }) => {
-    await page.goto("/pdf");
-    await page.getByRole("button", { name: "Protect PDF" }).click();
-    await expect(page.getByText(/No Real Encryption/i)).toBeVisible();
-    await page.locator('input[type=file]').setInputFiles({
-      name: "x.pdf",
-      mimeType: "application/pdf",
-      buffer: await makePdf(1),
-    });
-    const field = page.getByPlaceholder(/Password tag/i);
-    await expect(field).toBeVisible();
-    await expect(field).toHaveAttribute("type", "text");
   });
 
   test("Sign-in CTA is relabelled to Dashboard (no fake auth)", async ({ page }) => {

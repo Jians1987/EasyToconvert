@@ -1,7 +1,8 @@
 import fs from "fs";
 
 async function run() {
-    const apiKey = "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";
+    const apiKey = process.env.NVIDIA_NEMOTRON_API_KEY;
+    if (!apiKey) throw new Error("Set NVIDIA_NEMOTRON_API_KEY before running this script.");
     const res = await fetch("https://integrate.api.nvidia.com/v1/models", {
         headers: { "Authorization": `Bearer ${apiKey}` }
     });

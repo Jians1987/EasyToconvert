@@ -355,12 +355,12 @@ export function toJSONArray(grid: string[][]): Record<string, string>[] {
 
 /** Render an XLSX workbook blob for a single table grid. */
 export async function toXLSX(grid: string[][]): Promise<Blob> {
-  const XLSX = await import("xlsx");
-  const ws = XLSX.utils.aoa_to_sheet(grid);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Table");
-  const buf: ArrayBuffer = XLSX.write(wb, { type: "array", bookType: "xlsx" });
-  return new Blob([buf], {
+  const ExcelJS = (await import("exceljs")).default;
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet("Table");
+  worksheet.addRows(grid);
+  const buffer = await workbook.xlsx.writeBuffer();
+  return new Blob([buffer as BlobPart], {
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   });
 }
