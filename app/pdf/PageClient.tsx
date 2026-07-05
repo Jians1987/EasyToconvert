@@ -107,6 +107,20 @@ const reconstructTable = (items: TextItem[]): string[][] => {
   });
 };
 
+const parsePageSelection = (value: string, total: number): number[] => {
+  const pages = new Set<number>();
+  for (const part of value.split(",")) {
+    const match = part.trim().match(/^(\d+)(?:-(\d+))?$/);
+    if (!match) continue;
+    const start = Number(match[1]);
+    const end = Number(match[2] || match[1]);
+    for (let page = Math.min(start, end); page <= Math.max(start, end); page++) {
+      if (page >= 1 && page <= total) pages.add(page - 1);
+    }
+  }
+  return Array.from(pages);
+};
+
 const tableFromOcrText = (text: string): string[][] =>
   text
     .split("\n")
@@ -233,6 +247,7 @@ export function PdfPageClient() {
   const [inputPassword, setInputPassword] = useState("");
   const [isEncrypted, setIsEncrypted] = useState(false);
   const [rotateAngle, setRotateAngle] = useState(90);
+  const [rotatePages, setRotatePages] = useState("all");
   const [splitPages, setSplitPages] = useState("1");
   const [totalPages, setTotalPages] = useState(0);
   const [docFidelity, setDocFidelity] = useState<"layout" | "text">("layout");
@@ -402,9 +417,9 @@ export function PdfPageClient() {
   // ---------- Annotation helpers ----------
 
   const getEventPos = (e: React.MouseEvent, page: number) => {
-    const canvas = canvasRefs.current.get(page);
-    if (!canvas) return { x: 0, y: 0 };
-    const rect = canvas.getBoundingClientRect();
+    const container = containerRefs.current.get(page);
+    if (!container) return { x: 0, y: 0 };
+    const rect = container.getBoundingClientRect();
     const scaleX = 1000 / rect.width;
     const scaleY = 1000 / rect.height;
     return {
@@ -488,6 +503,28 @@ export function PdfPageClient() {
       setAnnotations(prev => [...prev, newAnn]);
     }
     setShowSigModal(false);
+  };
+
+  const addImageAnnotation = (file?: File) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || "");
+      const image = new Image();
+      image.onload = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = image.naturalWidth;
+        canvas.height = image.naturalHeight;
+        canvas.getContext("2d")?.drawImage(image, 0, 0);
+        setAnnotations((previous) => [...previous, {
+          id: crypto.randomUUID(), page: 1, type: "image", x: 100, y: 100,
+          width: 220, height: Math.max(80, 220 * image.naturalHeight / image.naturalWidth),
+          dataUrl: canvas.toDataURL("image/png"),
+        }]);
+      };
+      image.src = dataUrl;
+    };
+    reader.readAsDataURL(file);
   };
 
   // ---------- Shape drawing handlers ----------
@@ -719,8 +756,16 @@ export function PdfPageClient() {
         const file = selectedFiles[0];
         const pdf = await loadWithPassword(file);
         const pages = pdf.getPages();
-        pages.forEach(page => {
-          page.setRotation(degrees(rotateAngle));
+        const selected = rotatePages.trim().toLowerCase() === "all"
+          ? new Set(pages.map((_, index) => index))
+          : new Set(parsePageSelection(rotatePages, pages.length));
+        if (selected.size === 0) {
+          alert("No valid pages selected.");
+          return;
+        }
+        pages.forEach((page, index) => {
+          if (!selected.has(index)) return;
+          page.setRotation(degrees((page.getRotation().angle + rotateAngle) % 360));
         });
 
         const pdfBytes = await pdf.save();
@@ -852,13 +897,14 @@ export function PdfPageClient() {
                 size: ann.size || 16,
                 color: ann.color ? rgb(...Object.values(hexToUnit(ann.color)) as [number, number, number]) : rgb(0, 0, 0),
               });
-            } else if (ann.type === "draw" && ann.points) {
+            } else if ((ann.type === "draw" || ann.type === "highlight") && ann.points) {
               for (let i = 1; i < ann.points.length; i++) {
                 page.drawLine({
                   start: { x: ann.points[i - 1].x * scaleX, y: height - ann.points[i - 1].y * scaleY },
                   end: { x: ann.points[i].x * scaleX, y: height - ann.points[i].y * scaleY },
                   thickness: (ann.size || 2) * 0.5,
                   color: ann.color ? rgb(...Object.values(hexToUnit(ann.color)) as [number, number, number]) : rgb(0, 0, 0),
+                  opacity: ann.type === "highlight" ? 0.3 : 1,
                 });
               }
             } else if (ann.type === "rect") {
@@ -1071,6 +1117,17 @@ export function PdfPageClient() {
                     </button>
                   ))}
                 </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold text-slate-400">Pages to Rotate</label>
+                  <input
+                    type="text"
+                    aria-label="Pages to rotate"
+                    placeholder="all or 1,3,5-7"
+                    value={rotatePages}
+                    onChange={(event) => setRotatePages(event.target.value)}
+                    className="w-full glass-input text-xs"
+                  />
+                </div>
               </div>
             )}
 
@@ -1165,25 +1222,63 @@ export function PdfPageClient() {
             {mode === "edit" && imagePages.length > 0 && (
               <div className="space-y-4">
                 <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 p-3 dark:border-slate-800">
-                  <button type="button" onClick={() => setToolMode("text")} className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${toolMode === "text" ? "bg-indigo-600 text-white" : "bg-slate-100 dark:bg-slate-800"}`}>Text</button>
+                  {(["select", "text", "draw", "highlight", "rect", "circle", "line", "arrow"] as const).map((tool) => (
+                    <button key={tool} type="button" aria-label={`Editor ${tool}`} onClick={() => setToolMode(tool)} className={`rounded-lg px-3 py-1.5 text-xs font-semibold capitalize ${toolMode === tool ? "bg-indigo-600 text-white" : "bg-slate-100 dark:bg-slate-800"}`}>{tool}</button>
+                  ))}
+                  <button type="button" aria-label="Add signature" onClick={() => setShowSigModal(true)} className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold dark:bg-slate-800">Signature</button>
+                  <button type="button" aria-label="Add image" onClick={() => addImgInputRef.current?.click()} className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold dark:bg-slate-800">Image</button>
+                  <input ref={addImgInputRef} type="file" accept="image/*" className="hidden" onChange={(event) => addImageAnnotation(event.target.files?.[0])} />
                   <input type="text" placeholder="Text value..." value={editText} onChange={(event) => setEditText(event.target.value)} className="glass-input min-w-48 flex-1 text-xs" />
                   <input type="color" aria-label="Annotation color" value={editColor} onChange={(event) => setEditColor(event.target.value)} />
+                  <input type="range" aria-label="Annotation size" min="2" max="48" value={editSize} onChange={(event) => setEditSize(Number(event.target.value))} />
+                  {selectedAnnId && <button type="button" onClick={() => { setAnnotations((items) => items.filter((item) => item.id !== selectedAnnId)); setSelectedAnnId(null); }} className="rounded-lg bg-red-500 px-3 py-1.5 text-xs font-semibold text-white">Delete annotation</button>}
                 </div>
                 <div className="space-y-5">
-                  {imagePages.map((image) => (
-                    <div key={image.page} className="relative mx-auto max-w-3xl overflow-hidden rounded-lg border border-slate-200 dark:border-slate-800">
-                      <img src={image.url} alt={`Page ${image.page}`} className="block h-auto w-full" />
-                      <svg viewBox="0 0 1000 1000" preserveAspectRatio="none" className={`absolute inset-0 h-full w-full ${toolMode === "text" ? "cursor-crosshair" : "cursor-default"}`} onClick={(event) => handleEditorClick(event, image.page)}>
-                        {annotations.filter((annotation) => annotation.page === image.page).map((annotation) => annotation.type === "text" ? (
-                          <text key={annotation.id} x={annotation.x} y={annotation.y} fill={annotation.color || "#000000"} fontSize={(annotation.size || 18) * 1.5}>{annotation.text}</text>
-                        ) : null)}
-                      </svg>
-                    </div>
-                  ))}
+                  {pageLayout.map((layout, index) => {
+                    const pageNumber = index + 1;
+                    const image = layout.originalIndex >= 0 ? imagePages[layout.originalIndex] : undefined;
+                    return (
+                      <div key={layout.id} className="space-y-2">
+                        <div className="flex flex-wrap items-center justify-center gap-2 text-xs">
+                          <span className="font-semibold">Page {pageNumber}</span>
+                          <button type="button" aria-label={`Move page ${pageNumber} up`} onClick={() => movePageUp(index)} disabled={index === 0} className="rounded bg-slate-100 p-1.5 disabled:opacity-40 dark:bg-slate-800"><ArrowUp className="h-3.5 w-3.5" /></button>
+                          <button type="button" aria-label={`Move page ${pageNumber} down`} onClick={() => movePageDown(index)} disabled={index === pageLayout.length - 1} className="rounded bg-slate-100 p-1.5 disabled:opacity-40 dark:bg-slate-800"><ArrowDown className="h-3.5 w-3.5" /></button>
+                          <button type="button" aria-label={`Rotate page ${pageNumber}`} onClick={() => rotatePage(index)} className="rounded bg-slate-100 p-1.5 dark:bg-slate-800"><RotateCw className="h-3.5 w-3.5" /></button>
+                          <button type="button" aria-label={`Add blank page after ${pageNumber}`} onClick={() => addBlankPage(index)} className="rounded bg-slate-100 p-1.5 dark:bg-slate-800"><Plus className="h-3.5 w-3.5" /></button>
+                          <button type="button" aria-label={`Delete page ${pageNumber}`} onClick={() => deletePage(index)} disabled={pageLayout.length === 1} className="rounded bg-red-50 p-1.5 text-red-600 disabled:opacity-40 dark:bg-red-950/30"><Trash2 className="h-3.5 w-3.5" /></button>
+                          {layout.rotation !== 0 && <span className="text-slate-400">{layout.rotation}°</span>}
+                        </div>
+                        <div ref={(element) => { if (element) containerRefs.current.set(pageNumber, element); else containerRefs.current.delete(pageNumber); }} className="relative mx-auto aspect-[3/4] max-w-3xl overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-slate-800" style={{ transform: `rotate(${layout.rotation}deg)` }}>
+                          {image && <img src={image.url} alt={`Page ${pageNumber}`} className="block h-full w-full object-contain" />}
+                          <svg viewBox="0 0 1000 1000" preserveAspectRatio="none" className={`absolute inset-0 h-full w-full ${toolMode === "select" ? "cursor-default" : "cursor-crosshair"}`} onClick={(event) => handleEditorClick(event, pageNumber)} onMouseDown={(event) => handleCanvasMouseDown(event, pageNumber)} onMouseMove={(event) => handleCanvasMouseMove(event, pageNumber)} onMouseUp={(event) => handleCanvasMouseUp(event, pageNumber)}>
+                            {annotations.filter((annotation) => annotation.page === pageNumber).map((annotation) => {
+                              const selected = annotation.id === selectedAnnId;
+                              if (annotation.type === "text") return <text key={annotation.id} onClick={(event) => { event.stopPropagation(); setSelectedAnnId(annotation.id); }} x={annotation.x} y={annotation.y} fill={annotation.color || "#000000"} fontSize={(annotation.size || 18) * 1.5} stroke={selected ? "#6366f1" : "none"}>{annotation.text}</text>;
+                              if (annotation.type === "draw" || annotation.type === "highlight") return <path key={annotation.id} onClick={() => setSelectedAnnId(annotation.id)} d={pointsToPath(annotation.points)} fill="none" stroke={annotation.color} strokeWidth={annotation.size} opacity={annotation.type === "highlight" ? 0.35 : 1} />;
+                              if (annotation.type === "rect") return <rect key={annotation.id} onClick={() => setSelectedAnnId(annotation.id)} x={annotation.x} y={annotation.y} width={annotation.width} height={annotation.height} fill="none" stroke={annotation.color} strokeWidth={annotation.size} />;
+                              if (annotation.type === "circle") return <ellipse key={annotation.id} onClick={() => setSelectedAnnId(annotation.id)} cx={annotation.x + (annotation.width || 0) / 2} cy={annotation.y + (annotation.height || 0) / 2} rx={(annotation.width || 0) / 2} ry={(annotation.height || 0) / 2} fill="none" stroke={annotation.color} strokeWidth={annotation.size} />;
+                              if (annotation.type === "line" || annotation.type === "arrow") return <line key={annotation.id} onClick={() => setSelectedAnnId(annotation.id)} x1={annotation.x} y1={annotation.y} x2={annotation.x + (annotation.width || 0)} y2={annotation.y + (annotation.height || 0)} stroke={annotation.color} strokeWidth={annotation.size} />;
+                              if ((annotation.type === "signature" || annotation.type === "image") && annotation.dataUrl) return <image key={annotation.id} onClick={() => setSelectedAnnId(annotation.id)} href={annotation.dataUrl} x={annotation.x} y={annotation.y} width={annotation.width} height={annotation.height} />;
+                              return null;
+                            })}
+                          </svg>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
+                {showSigModal && (
+                  <div role="dialog" aria-label="Add signature" className="rounded-xl border border-slate-200 bg-white p-4 shadow-xl dark:border-slate-700 dark:bg-slate-900">
+                    <div className="mb-3 flex gap-2">
+                      <button type="button" onClick={() => setSigDrawType("draw")} className="rounded bg-slate-100 px-3 py-1.5 text-xs dark:bg-slate-800">Draw</button>
+                      <button type="button" onClick={() => setSigDrawType("type")} className="rounded bg-slate-100 px-3 py-1.5 text-xs dark:bg-slate-800">Type</button>
+                    </div>
+                    {sigDrawType === "draw" ? <canvas ref={sigCanvasRef} width={500} height={150} aria-label="Signature canvas" className="w-full rounded border bg-white" onMouseDown={handleSigCanvasMouseDown} onMouseMove={handleSigCanvasMouseMove} onMouseUp={handleSigCanvasMouseUp} onMouseLeave={handleSigCanvasMouseUp} /> : <input aria-label="Typed signature" value={typedSigText} onChange={(event) => setTypedSigText(event.target.value)} className="glass-input w-full" placeholder="Your signature" />}
+                    <div className="mt-3 flex gap-2"><button type="button" onClick={saveSignature} className="rounded bg-indigo-600 px-4 py-2 text-xs font-semibold text-white">Add signature</button><button type="button" onClick={clearSigCanvas} className="rounded bg-slate-100 px-4 py-2 text-xs dark:bg-slate-800">Clear</button><button type="button" onClick={() => setShowSigModal(false)} className="rounded bg-slate-100 px-4 py-2 text-xs dark:bg-slate-800">Cancel</button></div>
+                  </div>
+                )}
               </div>
             )}
-
             {/* Process button */}
             <button
               onClick={processPdf}
@@ -1213,7 +1308,7 @@ export function PdfPageClient() {
                 <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">Success! File Ready</span>
                 <span className="text-[10px] text-slate-400">
                   {mode === "to-image" && imagePages.length > 1
-                    ? `${imagePages.length} pages rendered. Click Download to save page 1.`
+                    ? `${imagePages.length} pages rendered. Download any page below.`
                     : "Your processed file is ready for download."}
                 </span>
               </div>
@@ -1237,6 +1332,15 @@ export function PdfPageClient() {
             >
               Download {mode === "to-doc" ? ".docx" : mode === "to-excel" ? ".xlsx" : mode === "to-image" ? "Page 1" : "File"}
             </a>
+          </div>
+        )}
+        {mode === "to-image" && imagePages.length > 1 && (
+          <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3" aria-label="Rendered PDF pages">
+            {imagePages.map((image) => (
+              <a key={image.page} href={image.url} download={`${selectedFiles[0]?.name.split(".")[0] || "preview"}_page${image.page}.jpg`} className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold hover:border-indigo-400 dark:border-slate-800">
+                <span>Page {image.page}</span><Download className="h-3.5 w-3.5" />
+              </a>
+            ))}
           </div>
         )}
       </div>
