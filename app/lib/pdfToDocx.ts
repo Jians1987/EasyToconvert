@@ -14,6 +14,7 @@ import {
   Document,
   Packer,
   Paragraph,
+  ImageRun,
   TextRun,
   HeadingLevel,
   Table,
@@ -52,6 +53,9 @@ export async function convertPdfToDocx(
   password?: string,
   onProgress?: (p: DocxProgress) => void
 ): Promise<Blob> {
+  if (fidelity === "layout") {
+    return convertPdfToImageDocx(file, password, onProgress);
+  }
   // ── Phase 1: Extract text with full metadata ────────────────────────────
   onProgress?.({ phase: "extract", message: "Extracting text from PDF…", percent: 5 });
   const { items: pageItems, numPages } = await extractPdfText(file, password);
@@ -127,6 +131,89 @@ export async function convertPdfToDocx(
   return blob;
 }
 
+async function convertPdfToImageDocx(
+  file: File,
+  password?: string,
+  onProgress?: (p: DocxProgress) => void
+): Promise<Blob> {
+  onProgress?.({ phase: "extract", message: "Rendering PDF pages…", percent: 5 });
+  const pdfjsLib = await loadPdfJsForLayout();
+  const pdf = await pdfjsLib.getDocument({
+    data: new Uint8Array(await file.arrayBuffer()),
+    password: password || undefined,
+  }).promise;
+
+  const sections: Array<{
+    properties: { page: { size: { width: number; height: number }; margin: { top: number; right: number; bottom: number; left: number } } };
+    children: Paragraph[];
+  }> = [];
+
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+    onProgress?.({
+      phase: "extract",
+      message: `Rendering page ${pageNumber} of ${pdf.numPages}…`,
+      percent: 5 + Math.round((pageNumber / pdf.numPages) * 75),
+      page: pageNumber,
+      totalPages: pdf.numPages,
+    });
+    const page = await pdf.getPage(pageNumber);
+    const pdfViewport = page.getViewport({ scale: 1 });
+    const renderViewport = page.getViewport({ scale: 2 });
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.ceil(renderViewport.width);
+    canvas.height = Math.ceil(renderViewport.height);
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Canvas rendering is unavailable.");
+    await page.render({ canvasContext: context, viewport: renderViewport }).promise;
+    const png = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("Could not render PDF page.")), "image/png");
+    });
+
+    sections.push({
+      properties: {
+        page: {
+          size: { width: Math.round(pdfViewport.width * 20), height: Math.round(pdfViewport.height * 20) },
+          margin: { top: 0, right: 0, bottom: 0, left: 0 },
+        },
+      },
+      children: [new Paragraph({
+        spacing: { before: 0, after: 0, line: 1 },
+        children: [new ImageRun({
+          type: "png",
+          data: new Uint8Array(await png.arrayBuffer()),
+          transformation: {
+            width: Math.floor(pdfViewport.width * 4 / 3) - 1,
+            height: Math.floor(pdfViewport.height * 4 / 3) - 1,
+          },
+          altText: { title: `PDF page ${pageNumber}`, description: "Exact visual rendering of the original PDF page", name: `Page ${pageNumber}` },
+        })],
+      })],
+    });
+  }
+
+  onProgress?.({ phase: "generate", message: "Generating exact-layout Word document…", percent: 90 });
+  const blob = await Packer.toBlob(new Document({ sections }));
+  onProgress?.({ phase: "done", message: "Exact-layout Word document ready", percent: 100 });
+  return blob;
+}
+
+function loadPdfJsForLayout(): Promise<any> {
+  return new Promise((resolve, reject) => {
+    if (typeof window !== "undefined" && (window as any).pdfjsLib) {
+      resolve((window as any).pdfjsLib);
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+    script.onload = () => {
+      (window as any).pdfjsLib.GlobalWorkerOptions.workerSrc =
+        "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+      resolve((window as any).pdfjsLib);
+    };
+    script.onerror = () => reject(new Error("Failed to load PDF.js engine."));
+    document.head.appendChild(script);
+  });
+}
 /**
  * Convert a PdfTextBlock into a properly styled docx Paragraph or Table.
  */
