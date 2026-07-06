@@ -56,7 +56,7 @@ const extractTableWithNemotron = async (pngBase64: string): Promise<string[][]> 
   return grid;
 };
 
-type PdfMode = "merge" | "split" | "rotate" | "to-doc" | "to-excel" | "to-image" | "edit";
+type PdfMode = "merge" | "split" | "rotate" | "to-doc" | "to-excel" | "to-image" | "edit" | "protect";
 
 interface TextItem {
   str: string;
@@ -160,7 +160,7 @@ async function renderPageForTatr(
 interface Annotation {
   id: string;
   page: number; // 1-indexed (relative to pageLayout list)
-  type: "text" | "draw" | "highlight" | "rect" | "circle" | "line" | "arrow" | "signature" | "image";
+  type: "text" | "draw" | "highlight" | "rect" | "circle" | "line" | "arrow" | "signature" | "image" | "redact";
   x: number; // 0..1000 scale-independent coordinate
   y: number;
   width?: number;
@@ -258,11 +258,22 @@ export function PdfPageClient() {
   const [tatrProgressLabel, setTatrProgressLabel] = useState("");
   const [tatrProgressPct, setTatrProgressPct] = useState(0);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+  
+  // Advanced Editor States
+  const [showAnnotations, setShowAnnotations] = useState(true);
+  const [zoomLevel, setZoomLevel] = useState(1);
+  
+  // Security States
+  const [ownerPassword, setOwnerPassword] = useState("");
+  const [permPrint, setPermPrint] = useState(true);
+  const [permHighResPrint, setPermHighResPrint] = useState(true);
+  const [permCopy, setPermCopy] = useState(true);
+  const [permModify, setPermModify] = useState(true);
   const [imagePages, setImagePages] = useState<{ url: string; page: number }[]>([]);
 
   // Advanced PDF Editor toolbar states
   const [toolMode, setToolMode] = useState<
-    "select" | "text" | "draw" | "highlight" | "rect" | "circle" | "line" | "arrow" | "signature" | "image"
+    "select" | "text" | "draw" | "highlight" | "rect" | "circle" | "line" | "arrow" | "signature" | "image" | "stamp" | "redact"
   >("select");
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [selectedAnnId, setSelectedAnnId] = useState<string | null>(null);
@@ -371,6 +382,7 @@ export function PdfPageClient() {
       case "to-excel": return "to Excel";
       case "to-image": return "to Image";
       case "edit": return "Edit";
+      case "protect": return "Protect";
     }
   }, [mode]);
 
@@ -382,6 +394,7 @@ export function PdfPageClient() {
     "to-excel": "Extract tables from a PDF into an Excel Spreadsheet (.xlsx). Uses Microsoft Table Transformer (on-device) or Nemotron Cloud AI.",
     "to-image": "Render each page of a PDF as a high-quality JPG image you can save individually.",
     edit: "Draw, annotate, add text, stamps, signatures, images, and shapes directly on PDF pages. Reorder, rotate, delete, and export.",
+    protect: "Encrypt your PDF with a password. Apply advanced permissions to restrict printing, copying, and modifications.",
   };
 
   // Check if any uploaded PDFs are encrypted
@@ -537,7 +550,7 @@ export function PdfPageClient() {
       const points = [{ x: pos.x, y: pos.y }];
       if (toolMode === "draw") setDrawPoints(points);
       else setHighlightPoints(points);
-    } else if (["rect", "circle", "line", "arrow"].includes(toolMode)) {
+    } else if (["rect", "circle", "line", "arrow", "redact"].includes(toolMode)) {
       setIsDraggingShape(true);
       setShapeStart(pos);
       setShapeCurrent(pos);
@@ -550,7 +563,7 @@ export function PdfPageClient() {
     if ((toolMode === "draw" || toolMode === "highlight") && isDrawing) {
       if (toolMode === "draw") setDrawPoints(prev => [...prev, pos]);
       else setHighlightPoints(prev => [...prev, pos]);
-    } else if (["rect", "circle", "line", "arrow"].includes(toolMode) && isDraggingShape) {
+    } else if (["rect", "circle", "line", "arrow", "redact"].includes(toolMode) && isDraggingShape) {
       setShapeCurrent(pos);
     }
   };
@@ -571,7 +584,7 @@ export function PdfPageClient() {
       setAnnotations(prev => [...prev, newAnn]);
       setDrawPoints([]);
       setHighlightPoints([]);
-    } else if (["rect", "circle", "line", "arrow"].includes(toolMode) && isDraggingShape) {
+    } else if (["rect", "circle", "line", "arrow", "redact"].includes(toolMode) && isDraggingShape) {
       setIsDraggingShape(false);
       const x = Math.min(shapeStart.x, shapeCurrent.x);
       const y = Math.min(shapeStart.y, shapeCurrent.y);
@@ -582,13 +595,10 @@ export function PdfPageClient() {
       const newAnn: Annotation = {
         id: Math.random().toString(36).substring(2, 9),
         page: pageNum,
-        type: toolMode === "rect" ? "rect" : toolMode === "circle" ? "circle" : toolMode === "line" ? "line" : "arrow",
-        x: toolMode === "line" || toolMode === "arrow" ? shapeStart.x : x,
-        y: toolMode === "line" || toolMode === "arrow" ? shapeStart.y : y,
-        width: toolMode === "line" || toolMode === "arrow" ? shapeCurrent.x - shapeStart.x : width,
-        height: toolMode === "line" || toolMode === "arrow" ? shapeCurrent.y - shapeStart.y : height,
-        size: Math.max(2, Math.round(editSize / 2)),
-        color: editColor
+        type: toolMode as any,
+        x, y, width, height,
+        size: editSize,
+        color: toolMode === "redact" ? "#ffffff" : editColor,
       };
       setAnnotations(prev => [...prev, newAnn]);
     }
@@ -861,6 +871,41 @@ export function PdfPageClient() {
           status: "success",
         });
 
+      } else if (mode === "protect") {
+        const file = selectedFiles[0];
+        const pdf = await loadWithPassword(file);
+        
+        if (!inputPassword && !ownerPassword) {
+          throw new Error("You must provide at least a User Password to protect the PDF.");
+        }
+
+        await pdf.encrypt({
+          userPassword: inputPassword || "",
+          ownerPassword: ownerPassword || inputPassword || "",
+          permissions: {
+            printing: permHighResPrint ? 'highResolution' : (permPrint ? 'lowResolution' : false),
+            modifying: permModify,
+            copying: permCopy,
+            annotating: permModify,
+            fillingForms: permModify,
+            contentAccessibility: permCopy,
+            documentAssembly: permModify,
+          },
+        });
+        
+        const pdfBytes = await pdf.save();
+        const blob = new Blob([pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
+        const url = URL.createObjectURL(blob);
+        setDownloadUrl(url);
+
+        addHistoryItem({
+          fileName: `protected_${file.name || "document.pdf"}`,
+          fileSize: blob.size,
+          toolType: "pdf-protect",
+          status: "success",
+          downloadUrl: url,
+        });
+
       } else if (mode === "edit") {
         const file = selectedFiles[0];
         const pdf = await loadWithPassword(file);
@@ -907,14 +952,15 @@ export function PdfPageClient() {
                   opacity: ann.type === "highlight" ? 0.3 : 1,
                 });
               }
-            } else if (ann.type === "rect") {
+            } else if (ann.type === "rect" || ann.type === "redact") {
               page.drawRectangle({
                 x: ann.x * scaleX,
                 y: height - (ann.y + (ann.height || 50)) * scaleY,
                 width: (ann.width || 100) * scaleX,
                 height: (ann.height || 50) * scaleY,
-                borderColor: ann.color ? rgb(...Object.values(hexToUnit(ann.color)) as [number, number, number]) : rgb(0, 0, 0),
-                borderWidth: (ann.size || 2) * 0.5,
+                color: ann.type === "redact" ? rgb(1, 1, 1) : undefined,
+                borderColor: ann.type === "rect" ? (ann.color ? rgb(...Object.values(hexToUnit(ann.color)) as [number, number, number]) : rgb(0, 0, 0)) : undefined,
+                borderWidth: ann.type === "rect" ? (ann.size || 2) * 0.5 : 0,
               });
             } else if (ann.type === "circle") {
               page.drawEllipse({
@@ -993,6 +1039,7 @@ export function PdfPageClient() {
               { id: "to-excel", label: "→ Excel" },
               { id: "to-image", label: "→ Image" },
               { id: "edit", label: "Edit" },
+              { id: "protect", label: "Protect" },
             ].map((t) => (
               <button
                 key={t.id}
@@ -1219,10 +1266,49 @@ export function PdfPageClient() {
               </div>
             )}
 
+            {mode === "protect" && (
+              <div className="space-y-4">
+                <div className="space-y-3 p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50">
+                  <div className="space-y-2">
+                    <label className="text-[10px] uppercase font-bold text-slate-400">User Password (To Open)</label>
+                    <input type="password" value={inputPassword} onChange={(e) => setInputPassword(e.target.value)} placeholder="Required to open the PDF..." className="glass-input w-full text-sm" />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] uppercase font-bold text-slate-400">Owner Password (To Edit Permissions)</label>
+                    <input type="password" value={ownerPassword} onChange={(e) => setOwnerPassword(e.target.value)} placeholder="Required to change permissions later..." className="glass-input w-full text-sm" />
+                  </div>
+                </div>
+
+                <div className="space-y-2 p-4 rounded-xl border border-slate-200 dark:border-slate-800">
+                  <label className="text-[10px] uppercase font-bold text-slate-400 block mb-3">Permissions</label>
+                  
+                  <label className="flex items-center space-x-3 cursor-pointer">
+                    <input type="checkbox" checked={permPrint} onChange={(e) => setPermPrint(e.target.checked)} className="rounded text-indigo-500 focus:ring-indigo-500/50" />
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Allow Printing</span>
+                  </label>
+                  
+                  <label className="flex items-center space-x-3 cursor-pointer">
+                    <input type="checkbox" checked={permHighResPrint} onChange={(e) => setPermHighResPrint(e.target.checked)} className="rounded text-indigo-500 focus:ring-indigo-500/50" disabled={!permPrint} />
+                    <span className={`text-sm font-medium ${!permPrint ? 'text-slate-400' : 'text-slate-700 dark:text-slate-300'}`}>Allow High-Resolution Printing</span>
+                  </label>
+                  
+                  <label className="flex items-center space-x-3 cursor-pointer">
+                    <input type="checkbox" checked={permCopy} onChange={(e) => setPermCopy(e.target.checked)} className="rounded text-indigo-500 focus:ring-indigo-500/50" />
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Allow Content Copying</span>
+                  </label>
+                  
+                  <label className="flex items-center space-x-3 cursor-pointer">
+                    <input type="checkbox" checked={permModify} onChange={(e) => setPermModify(e.target.checked)} className="rounded text-indigo-500 focus:ring-indigo-500/50" />
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Allow Document Modification</span>
+                  </label>
+                </div>
+              </div>
+            )}
+
             {mode === "edit" && imagePages.length > 0 && (
               <div className="space-y-4">
                 <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 p-3 dark:border-slate-800">
-                  {(["select", "text", "draw", "highlight", "rect", "circle", "line", "arrow"] as const).map((tool) => (
+                  {(["select", "text", "draw", "highlight", "rect", "circle", "line", "arrow", "redact"] as const).map((tool) => (
                     <button key={tool} type="button" aria-label={`Editor ${tool}`} onClick={() => setToolMode(tool)} className={`rounded-lg px-3 py-1.5 text-xs font-semibold capitalize ${toolMode === tool ? "bg-indigo-600 text-white" : "bg-slate-100 dark:bg-slate-800"}`}>{tool}</button>
                   ))}
                   <button type="button" aria-label="Add signature" onClick={() => setShowSigModal(true)} className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold dark:bg-slate-800">Signature</button>
@@ -1231,9 +1317,29 @@ export function PdfPageClient() {
                   <input type="text" placeholder="Text value..." value={editText} onChange={(event) => setEditText(event.target.value)} className="glass-input min-w-48 flex-1 text-xs" />
                   <input type="color" aria-label="Annotation color" value={editColor} onChange={(event) => setEditColor(event.target.value)} />
                   <input type="range" aria-label="Annotation size" min="2" max="48" value={editSize} onChange={(event) => setEditSize(Number(event.target.value))} />
-                  {selectedAnnId && <button type="button" onClick={() => { setAnnotations((items) => items.filter((item) => item.id !== selectedAnnId)); setSelectedAnnId(null); }} className="rounded-lg bg-red-500 px-3 py-1.5 text-xs font-semibold text-white">Delete annotation</button>}
+                  {selectedAnnId && <button type="button" onClick={() => { setAnnotations((items) => items.filter((item) => item.id !== selectedAnnId)); setSelectedAnnId(null); }} className="rounded-lg bg-red-500 px-3 py-1.5 text-xs font-semibold text-white">Delete</button>}
                 </div>
-                <div className="space-y-5">
+                
+                {/* Advanced Viewer Controls */}
+                <div className="flex flex-wrap items-center gap-4 rounded-xl border border-indigo-200 bg-indigo-50/50 p-3 dark:border-indigo-900/50 dark:bg-indigo-950/20">
+                  <div className="flex items-center gap-2 border-r border-indigo-200 pr-4 dark:border-indigo-800">
+                    <span className="text-xs font-bold text-indigo-900 dark:text-indigo-100">Layers</span>
+                    <label className="flex items-center space-x-2 text-xs font-medium cursor-pointer">
+                      <input type="checkbox" className="rounded text-indigo-500 focus:ring-indigo-500/50" checked={showAnnotations} onChange={(e) => setShowAnnotations(e.target.checked)} />
+                      <span>Show Annotations</span>
+                    </label>
+                    <button type="button" onClick={() => { if(confirm("Clear all annotations?")) setAnnotations([]); }} className="ml-2 rounded-lg bg-red-100 px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-200 dark:bg-red-900/30 dark:hover:bg-red-900/50">Clear All</button>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-indigo-900 dark:text-indigo-100">Zoom</span>
+                    <button type="button" onClick={() => setZoomLevel(z => Math.max(0.5, z - 0.25))} className="rounded bg-white px-2 py-1 text-xs shadow-sm border border-indigo-100 dark:border-indigo-800 dark:bg-indigo-900 hover:bg-indigo-50">-</button>
+                    <span className="text-xs w-12 text-center">{Math.round(zoomLevel * 100)}%</span>
+                    <button type="button" onClick={() => setZoomLevel(z => Math.min(3, z + 0.25))} className="rounded bg-white px-2 py-1 text-xs shadow-sm border border-indigo-100 dark:border-indigo-800 dark:bg-indigo-900 hover:bg-indigo-50">+</button>
+                    <button type="button" onClick={() => setZoomLevel(1)} className="rounded bg-indigo-100 px-2 py-1 text-xs text-indigo-700 dark:bg-indigo-800 dark:text-indigo-200">Reset</button>
+                  </div>
+                </div>
+
+                <div className="space-y-5" style={{ transform: `scale(${zoomLevel})`, transformOrigin: "top center", transition: "transform 0.2s ease" }}>
                   {pageLayout.map((layout, index) => {
                     const pageNumber = index + 1;
                     const image = layout.originalIndex >= 0 ? imagePages[layout.originalIndex] : undefined;
@@ -1251,7 +1357,7 @@ export function PdfPageClient() {
                         <div ref={(element) => { if (element) containerRefs.current.set(pageNumber, element); else containerRefs.current.delete(pageNumber); }} className="relative mx-auto aspect-[3/4] max-w-3xl overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-slate-800" style={{ transform: `rotate(${layout.rotation}deg)` }}>
                           {image && <img src={image.url} alt={`Page ${pageNumber}`} className="block h-full w-full object-contain" />}
                           <svg viewBox="0 0 1000 1000" preserveAspectRatio="none" className={`absolute inset-0 h-full w-full ${toolMode === "select" ? "cursor-default" : "cursor-crosshair"}`} onClick={(event) => handleEditorClick(event, pageNumber)} onMouseDown={(event) => handleCanvasMouseDown(event, pageNumber)} onMouseMove={(event) => handleCanvasMouseMove(event, pageNumber)} onMouseUp={(event) => handleCanvasMouseUp(event, pageNumber)}>
-                            {annotations.filter((annotation) => annotation.page === pageNumber).map((annotation) => {
+                            {showAnnotations && annotations.filter((annotation) => annotation.page === pageNumber).map((annotation) => {
                               const selected = annotation.id === selectedAnnId;
                               if (annotation.type === "text") return <text key={annotation.id} onClick={(event) => { event.stopPropagation(); setSelectedAnnId(annotation.id); }} x={annotation.x} y={annotation.y} fill={annotation.color || "#000000"} fontSize={(annotation.size || 18) * 1.5} stroke={selected ? "#6366f1" : "none"}>{annotation.text}</text>;
                               if (annotation.type === "draw" || annotation.type === "highlight") return <path key={annotation.id} onClick={() => setSelectedAnnId(annotation.id)} d={pointsToPath(annotation.points)} fill="none" stroke={annotation.color} strokeWidth={annotation.size} opacity={annotation.type === "highlight" ? 0.35 : 1} />;
@@ -1259,6 +1365,7 @@ export function PdfPageClient() {
                               if (annotation.type === "circle") return <ellipse key={annotation.id} onClick={() => setSelectedAnnId(annotation.id)} cx={annotation.x + (annotation.width || 0) / 2} cy={annotation.y + (annotation.height || 0) / 2} rx={(annotation.width || 0) / 2} ry={(annotation.height || 0) / 2} fill="none" stroke={annotation.color} strokeWidth={annotation.size} />;
                               if (annotation.type === "line" || annotation.type === "arrow") return <line key={annotation.id} onClick={() => setSelectedAnnId(annotation.id)} x1={annotation.x} y1={annotation.y} x2={annotation.x + (annotation.width || 0)} y2={annotation.y + (annotation.height || 0)} stroke={annotation.color} strokeWidth={annotation.size} />;
                               if ((annotation.type === "signature" || annotation.type === "image") && annotation.dataUrl) return <image key={annotation.id} onClick={() => setSelectedAnnId(annotation.id)} href={annotation.dataUrl} x={annotation.x} y={annotation.y} width={annotation.width} height={annotation.height} />;
+                              if (annotation.type === "redact") return <rect key={annotation.id} onClick={() => setSelectedAnnId(annotation.id)} x={annotation.x} y={annotation.y} width={annotation.width} height={annotation.height} fill="#ffffff" stroke={selected ? "#6366f1" : "none"} strokeWidth={selected ? 2 : 0} />;
                               return null;
                             })}
                           </svg>
