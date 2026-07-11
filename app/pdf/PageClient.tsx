@@ -7,6 +7,7 @@ import { useConversions } from "@/app/providers";
 import { ocrImage, ocrImageWithNemotron } from "@/app/lib/ocr";
 import { convertPdfToDocx, type DocxProgress } from "@/app/lib/pdfToDocx";
 import { convertPdfToXlsx, type XlsxProgress, type TableEngine } from "@/app/lib/pdfToXlsx";
+import { renderPdfWithPdfium } from "@/app/lib/pdfiumRenderer";
 import { extractTables, type PdfTextItem } from "@/app/lib/tableExtractor";
 import { PDFDocument, degrees, rgb, StandardFonts } from "pdf-lib-plus-encrypt";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, BorderStyle, ImageRun } from "docx";
@@ -197,6 +198,44 @@ const loadPdfJs = (): Promise<any> => {
   });
 };
 
+type RenderedPdfImage = { url: string; page: number };
+
+const renderPdfPagesWithPreferredEngine = async (
+  file: File,
+  options: {
+    scale: number;
+    imageType: "image/png" | "image/jpeg";
+    quality?: number;
+    password?: string;
+    onProgress?: (page: number, totalPages: number) => void;
+  }
+): Promise<RenderedPdfImage[]> => {
+  try {
+    const pages = await renderPdfWithPdfium(file, options);
+    return pages.map(({ url, page }) => ({ url, page }));
+  } catch (error) {
+    console.warn("PDFium rendering failed; falling back to PDF.js.", error);
+    const pdfjsLib = await loadPdfJs();
+    const pdf = await pdfjsLib.getDocument({
+      data: new Uint8Array(await file.arrayBuffer()),
+      password: options.password || undefined,
+    }).promise;
+    const images: RenderedPdfImage[] = [];
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+      options.onProgress?.(pageNumber, pdf.numPages);
+      const page = await pdf.getPage(pageNumber);
+      const viewport = page.getViewport({ scale: options.scale });
+      const canvas = document.createElement("canvas");
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("Canvas rendering is unavailable.");
+      await page.render({ canvasContext: context, viewport }).promise;
+      images.push({ url: canvas.toDataURL(options.imageType, options.quality), page: pageNumber });
+    }
+    return images;
+  }
+};
 const hexToUnit = (hex: string) => {
   const h = hex.replace("#", "");
   return {
@@ -333,23 +372,14 @@ export function PdfPageClient() {
 
     if (files.length > 0 && mode === "edit") {
       try {
-        const pdfjsLib = await loadPdfJs();
-        const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(await files[0].arrayBuffer()) }).promise;
-        const rendered: Array<{ url: string; page: number }> = [];
-        for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
-          const page = await pdf.getPage(pageNumber);
-          const viewport = page.getViewport({ scale: 1.5 });
-          const canvas = document.createElement("canvas");
-          canvas.width = viewport.width;
-          canvas.height = viewport.height;
-          const context = canvas.getContext("2d");
-          if (!context) throw new Error("Canvas rendering is unavailable.");
-          await page.render({ canvasContext: context, viewport }).promise;
-          rendered.push({ url: canvas.toDataURL("image/jpeg", 0.85), page: pageNumber });
-        }
+        const rendered = await renderPdfPagesWithPreferredEngine(files[0], {
+          scale: 1.5,
+          imageType: "image/jpeg",
+          quality: 0.85,
+        });
         setImagePages(rendered);
-        setTotalPages(pdf.numPages);
-        setPageLayout(Array.from({ length: pdf.numPages }, (_, index) => ({ id: `page-${index + 1}`, originalIndex: index, rotation: 0 })));
+        setTotalPages(rendered.length);
+        setPageLayout(Array.from({ length: rendered.length }, (_, index) => ({ id: `page-${index + 1}`, originalIndex: index, rotation: 0 })));
       } catch (error) {
         console.error("Editor preview rendering failed:", error);
         alert("Could not render the PDF for editing. Check your connection or try another file.");
@@ -390,7 +420,7 @@ export function PdfPageClient() {
     merge: "Combine multiple PDF files into one document. Set an optional password to encrypt the output.",
     split: "Extract specific pages into a separate PDF file.",
     rotate: "Rotate all pages or a specific set of pages by 90°, 180°, or 270°.",
-    "to-doc": "Convert a PDF into a Word Document (.docx). Layout fidelity mode preserves structure. Cloud AI OCR handles scanned pages.",
+    "to-doc": "Convert a PDF into a Word Document (.docx). Exact Layout uses PDFium rendering for visual fidelity; Editable Text keeps selectable text.",
     "to-excel": "Extract tables from a PDF into an Excel Spreadsheet (.xlsx). Uses Microsoft Table Transformer (on-device) or Nemotron Cloud AI.",
     "to-image": "Render each page of a PDF as a high-quality JPG image you can save individually.",
     edit: "Draw, annotate, add text, stamps, signatures, images, and shapes directly on PDF pages. Reorder, rotate, delete, and export.",
@@ -838,25 +868,16 @@ export function PdfPageClient() {
 
       } else if (mode === "to-image") {
         const file = selectedFiles[0];
-        const pdfjsLib = await loadPdfJs();
-        const arrayBuffer = await file.arrayBuffer();
-        const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
-        const numPages = pdf.numPages;
-
-        const images: { url: string; page: number }[] = [];
-        for (let i = 1; i <= numPages; i++) {
-          const page = await pdf.getPage(i);
-          const viewport = page.getViewport({ scale: 2.0 });
-          const canvas = document.createElement("canvas");
-          canvas.width = viewport.width;
-          canvas.height = viewport.height;
-          const ctx = canvas.getContext("2d");
-          if (ctx) {
-            await page.render({ canvasContext: ctx, viewport }).promise;
-            const url = canvas.toDataURL("image/jpeg", 0.95);
-            images.push({ url, page: i });
-          }
-        }
+        const images = await renderPdfPagesWithPreferredEngine(file, {
+          scale: 2.0,
+          imageType: "image/jpeg",
+          quality: 0.95,
+          password: inputPassword || undefined,
+          onProgress: (page, totalPages) => {
+            setTatrProgressLabel(`PDFium rendering page ${page} of ${totalPages}...`);
+            setTatrProgressPct(5 + Math.round((page / totalPages) * 90));
+          },
+        });
 
         setImagePages(images);
 
@@ -1182,17 +1203,17 @@ export function PdfPageClient() {
               <div className="space-y-2">
                 <label className="text-[10px] uppercase font-bold text-slate-400">Conversion Mode</label>
                 <div className="flex space-x-2">
-                  {(["layout", "text", "image"] as const).map((fidelity) => (
+                  {(["layout", "text"] as const).map((fidelity) => (
                     <button
                       key={fidelity}
                       onClick={() => setDocFidelity(fidelity)}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold capitalize ${
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${
                         docFidelity === fidelity
                           ? "bg-indigo-600 text-white"
                           : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200"
                       }`}
                     >
-                      {fidelity === "layout" ? "Structured Text" : fidelity === "text" ? "Flowing Text" : "Exact Image"}
+                      {fidelity === "layout" ? "Exact Layout" : "Editable Text"}
                     </button>
                   ))}
                 </div>

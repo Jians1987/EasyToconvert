@@ -33,6 +33,7 @@ import {
   type PdfTextItem,
   type PdfTextBlock,
 } from "./pdfTextExtractor";
+import { renderPdfWithPdfium } from "./pdfiumRenderer";
 
 export type DocFidelity = "layout" | "text" | "image";
 
@@ -53,7 +54,7 @@ export async function convertPdfToDocx(
   password?: string,
   onProgress?: (p: DocxProgress) => void
 ): Promise<Blob> {
-  if (fidelity === "image") {
+  if (fidelity === "layout" || fidelity === "image") {
     return convertPdfToImageDocx(file, password, onProgress);
   }
   // ── Phase 1: Extract text with full metadata ────────────────────────────
@@ -136,7 +137,66 @@ async function convertPdfToImageDocx(
   password?: string,
   onProgress?: (p: DocxProgress) => void
 ): Promise<Blob> {
-  onProgress?.({ phase: "extract", message: "Rendering PDF pages…", percent: 5 });
+  try {
+    return await convertPdfToImageDocxWithPdfium(file, password, onProgress);
+  } catch (error) {
+    console.warn("PDFium exact-layout rendering failed; falling back to PDF.js.", error);
+    return convertPdfToImageDocxWithPdfJs(file, password, onProgress);
+  }
+}
+
+async function convertPdfToImageDocxWithPdfium(
+  file: File,
+  password?: string,
+  onProgress?: (p: DocxProgress) => void
+): Promise<Blob> {
+  onProgress?.({ phase: "extract", message: "Rendering PDF pages with PDFium...", percent: 5 });
+  const renderedPages = await renderPdfWithPdfium(file, {
+    password,
+    scale: 2,
+    imageType: "image/png",
+    onProgress: (page, totalPages) => onProgress?.({
+      phase: "extract",
+      message: `PDFium rendering page ${page} of ${totalPages}...`,
+      percent: 5 + Math.round((page / totalPages) * 75),
+      page,
+      totalPages,
+    }),
+  });
+
+  const sections = await Promise.all(renderedPages.map(async (renderedPage) => ({
+    properties: {
+      page: {
+        size: { width: Math.round(renderedPage.originalWidth * 20), height: Math.round(renderedPage.originalHeight * 20) },
+        margin: { top: 0, right: 0, bottom: 0, left: 0 },
+      },
+    },
+    children: [new Paragraph({
+      spacing: { before: 0, after: 0, line: 1 },
+      children: [new ImageRun({
+        type: "png",
+        data: new Uint8Array(await renderedPage.blob.arrayBuffer()),
+        transformation: {
+          width: Math.floor(renderedPage.originalWidth * 4 / 3) - 1,
+          height: Math.floor(renderedPage.originalHeight * 4 / 3) - 1,
+        },
+        altText: { title: `PDF page ${renderedPage.page}`, description: "Exact visual rendering of the original PDF page by PDFium", name: `Page ${renderedPage.page}` },
+      })],
+    })],
+  })));
+
+  onProgress?.({ phase: "generate", message: "Generating PDFium exact-layout Word document...", percent: 90 });
+  const blob = await Packer.toBlob(new Document({ sections }));
+  onProgress?.({ phase: "done", message: "Exact-layout Word document ready", percent: 100 });
+  return blob;
+}
+
+async function convertPdfToImageDocxWithPdfJs(
+  file: File,
+  password?: string,
+  onProgress?: (p: DocxProgress) => void
+): Promise<Blob> {
+  onProgress?.({ phase: "extract", message: "Rendering PDF pages with PDF.js fallback...", percent: 5 });
   const pdfjsLib = await loadPdfJsForLayout();
   const pdf = await pdfjsLib.getDocument({
     data: new Uint8Array(await file.arrayBuffer()),
@@ -151,7 +211,7 @@ async function convertPdfToImageDocx(
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
     onProgress?.({
       phase: "extract",
-      message: `Rendering page ${pageNumber} of ${pdf.numPages}…`,
+      message: `PDF.js rendering page ${pageNumber} of ${pdf.numPages}...`,
       percent: 5 + Math.round((pageNumber / pdf.numPages) * 75),
       page: pageNumber,
       totalPages: pdf.numPages,
@@ -191,12 +251,11 @@ async function convertPdfToImageDocx(
     });
   }
 
-  onProgress?.({ phase: "generate", message: "Generating exact-layout Word document…", percent: 90 });
+  onProgress?.({ phase: "generate", message: "Generating exact-layout Word document...", percent: 90 });
   const blob = await Packer.toBlob(new Document({ sections }));
   onProgress?.({ phase: "done", message: "Exact-layout Word document ready", percent: 100 });
   return blob;
 }
-
 function loadPdfJsForLayout(): Promise<any> {
   return new Promise((resolve, reject) => {
     if (typeof window !== "undefined" && (window as any).pdfjsLib) {
