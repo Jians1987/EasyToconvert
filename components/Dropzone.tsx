@@ -10,6 +10,10 @@ interface DropzoneProps {
   multiple?: boolean;
   title?: string;
   description?: string;
+  /** Controlled mode: when provided, this list is displayed instead of internal state. */
+  files?: File[];
+  /** Controlled mode: called whenever the file list changes. */
+  onFilesChanged?: (files: File[]) => void;
 }
 
 export default function Dropzone({
@@ -19,11 +23,25 @@ export default function Dropzone({
   multiple = true,
   title = "Drag & Drop files here",
   description = "or click to browse your files",
+  files: controlledFiles,
+  onFilesChanged,
 }: DropzoneProps) {
   const [isDragActive, setIsDragActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [queuedFiles, setQueuedFiles] = useState<File[]>([]);
+  const [internalFiles, setInternalFiles] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Use controlled files if provided, otherwise fall back to internal state
+  const queuedFiles = controlledFiles !== undefined ? controlledFiles : internalFiles;
+
+  const setQueuedFiles = (updater: File[] | ((prev: File[]) => File[])) => {
+    const next =
+      typeof updater === "function" ? updater(queuedFiles) : updater;
+    if (controlledFiles === undefined) {
+      setInternalFiles(next);
+    }
+    onFilesChanged?.(next);
+  };
 
   const acceptsFile = (file: File) => {
     if (accept === "*" || accept === "*/*") return true;

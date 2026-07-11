@@ -1,108 +1,42 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import {
-  FileText,
-  Image as ImageIcon,
-  Database,
-  Code,
-  Sparkles,
-  Video,
-  Table2,
   ChevronRight,
   Shield,
   Zap,
   Users,
   Search,
-  Star
+  Star,
+  Sparkles,
 } from "lucide-react";
+import { CATEGORIES } from "@/app/data/categories";
+
+/** Convert a tool name to a URL-safe anchor slug. */
+const toSlug = (name: string) =>
+  name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
 
 export function HomeClient() {
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
 
-  const categories = [
-    {
-      id: "pdf",
-      title: "PDF Utilities",
-      icon: FileText,
-      color: "from-red-500/20 to-orange-500/20 text-red-500 border-red-500/30",
-      description: "Merge, split, rotate, edit, and convert PDF files to Word, Excel, or JPG images directly in your browser.",
-      tools: ["Merge PDF", "Split PDF", "PDF to Word", "PDF to Excel", "PDF Editor", "Protect PDF"],
-      path: "/pdf",
-    },
-    {
-      id: "image",
-      title: "Image Studio",
-      icon: ImageIcon,
-      color: "from-blue-500/20 to-indigo-500/20 text-blue-500 border-blue-500/30",
-      description: "Compress, resize, read metadata, and convert PNG to JPG, WebP, and SVG formats.",
-      tools: ["PNG to JPG", "Compress Image", "Image Metadata", "Resize Image", "SVG to PNG"],
-      path: "/image",
-    },
-    {
-      id: "data",
-      title: "Data Converters",
-      icon: Database,
-      color: "from-emerald-500/20 to-teal-500/20 text-emerald-500 border-emerald-500/30",
-      description: "JSON formatting, minifying, validation, plus CSV, XML, and YAML conversion.",
-      tools: ["JSON Formatter", "CSV to JSON", "XML to JSON", "JSON to YAML", "JSON Minifier"],
-      path: "/data",
-    },
-    {
-      id: "developer",
-      title: "Developer Core",
-      icon: Code,
-      color: "from-purple-500/20 to-pink-500/20 text-purple-500 border-purple-500/30",
-      description: "Base64 & URL encoding, UUID generators, password builders, and QR code makers.",
-      tools: ["Base64 Encode", "URL Encoder", "UUID Generator", "QR Code", "Password Maker"],
-      path: "/developer",
-    },
-    {
-      id: "javascript",
-      title: "JS & HTML/CSS",
-      icon: Code,
-      color: "from-amber-500/20 to-yellow-500/20 text-amber-500 border-amber-500/30",
-      description: "Minify JS, HTML & CSS, beautify HTML, and generate CSS gradients and box shadows.",
-      tools: ["JS Minifier", "HTML Beautifier", "CSS Minifier", "CSS Gradient Generator", "Box Shadow"],
-      path: "/javascript",
-    },
-    {
-      id: "ai",
-      title: "AI Powerhouse",
-      icon: Sparkles,
-      color: "from-violet-500/20 to-fuchsia-500/20 text-violet-500 border-violet-500/30",
-      description: "Extract text from scanned PDFs and images with on-device OCR, summarize documents, explain code, and translate text.",
-      tools: ["AI Summarizer", "Image OCR", "AI Code Explainer", "Document Translator"],
-      path: "/ai",
-    },
-    {
-      id: "media",
-      title: "Video & Audio",
-      icon: Video,
-      color: "from-cyan-500/20 to-sky-500/20 text-cyan-500 border-cyan-500/30",
-      description: "Compress audio, extract MP3 from video, and trim clips locally with FFmpeg WebAssembly.",
-      tools: ["Compress Audio", "Extract Audio", "Audio Cutter"],
-      path: "/media",
-    },
-    {
-      id: "table-detect",
-      title: "Table Detection",
-      icon: Table2,
-      color: "from-rose-500/20 to-pink-500/20 text-rose-500 border-rose-500/30",
-      description: "Research-grade AI table detection powered by Microsoft Table Transformer (TATR). Locate tables in any PDF or image, extract rows & columns, export to CSV / JSON / Excel — 100% on-device.",
-      tools: ["Table Detector", "Structure Recognition", "CSV Export", "Excel Export", "JSON Export"],
-      path: "/table-detect",
-    },
-  ];
+  // Debounce search input by 150 ms
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(searchQuery), 150);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
-  const filteredCategories = searchQuery
-    ? categories.filter(
-        (cat) =>
-          cat.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          cat.tools.some((t) => t.toLowerCase().includes(searchQuery.toLowerCase()))
-      )
-    : categories;
+  const filteredCategories = useMemo(() => {
+    if (!debouncedQuery) return CATEGORIES;
+    const q = debouncedQuery.toLowerCase();
+    return CATEGORIES.filter(
+      (cat) =>
+        cat.title.toLowerCase().includes(q) ||
+        cat.description.toLowerCase().includes(q) ||
+        cat.tools.some((t) => t.toLowerCase().includes(q))
+    );
+  }, [debouncedQuery]);
 
   return (
     <div className="space-y-20">
@@ -136,10 +70,17 @@ export function HomeClient() {
                 className="flex-grow bg-transparent text-sm py-2.5 px-3 outline-none placeholder-slate-400"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
+                aria-label="Search tools"
               />
               <button className="px-5 py-2.5 rounded-lg text-sm font-semibold bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-md hover:opacity-90 transition-all flex items-center space-x-1">
                 <span>Find</span>
               </button>
+            </div>
+            {/* Accessible live region for screen readers */}
+            <div aria-live="polite" className="sr-only">
+              {debouncedQuery
+                ? `${filteredCategories.length} tool categor${filteredCategories.length === 1 ? "y" : "ies"} found`
+                : ""}
             </div>
           </div>
         </div>
@@ -156,9 +97,9 @@ export function HomeClient() {
           </p>
         </div>
 
-        {searchQuery && filteredCategories.length === 0 && (
+        {debouncedQuery && filteredCategories.length === 0 && (
           <div className="text-center py-10 text-slate-400 text-sm">
-            No tools found for &ldquo;{searchQuery}&rdquo;. Try a different keyword.
+            No tools found for &ldquo;{debouncedQuery}&rdquo;. Try a different keyword.
           </div>
         )}
 
@@ -188,7 +129,7 @@ export function HomeClient() {
                     {cat.tools.map((tool) => (
                       <Link
                         key={tool}
-                        href={cat.path}
+                        href={`${cat.path}#${toSlug(tool)}`}
                         className="text-[10px] bg-slate-100 hover:bg-slate-200 dark:bg-slate-800/80 dark:hover:bg-slate-800 border border-slate-200/50 dark:border-slate-700/50 rounded-full px-2.5 py-0.5 text-slate-600 dark:text-slate-300 font-medium transition-colors cursor-pointer"
                       >
                         {tool}

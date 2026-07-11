@@ -4,8 +4,6 @@ import React, { useRef, useState } from "react";
 import ToolLayout from "@/components/ToolLayout";
 import Dropzone from "@/components/Dropzone";
 import { useConversions } from "@/app/providers";
-import { FFmpeg } from "@ffmpeg/ffmpeg";
-import { fetchFile, toBlobURL } from "@ffmpeg/util";
 import { Video, Music, Star, AlertTriangle, Download, Loader2, Cpu } from "lucide-react";
 
 type MediaMode = "compress" | "extract" | "audio-trim";
@@ -33,7 +31,7 @@ export function MediaPageClient() {
     if (outputUrl?.startsWith("blob:")) URL.revokeObjectURL(outputUrl);
   }, [outputUrl]);
 
-  const ffmpegRef = useRef<FFmpeg | null>(null);
+  const ffmpegRef = useRef<any>(null);
   const { addHistoryItem, favorites, toggleFavorite } = useConversions();
 
   const handleFilesSelected = (files: File[]) => {
@@ -45,12 +43,14 @@ export function MediaPageClient() {
   };
 
   // Lazy-load the FFmpeg engine the first time it is needed.
-  const ensureEngine = async (): Promise<FFmpeg> => {
+  const ensureEngine = async (): Promise<any> => {
     if (ffmpegRef.current) return ffmpegRef.current;
     setEngineState("loading");
     try {
+      const { FFmpeg } = await import("@ffmpeg/ffmpeg");
+      const { toBlobURL } = await import("@ffmpeg/util");
       const ffmpeg = new FFmpeg();
-      ffmpeg.on("progress", ({ progress: p }) => {
+      ffmpeg.on("progress", ({ progress: p }: { progress: number }) => {
         setProgress(Math.min(100, Math.max(0, Math.round(p * 100))));
       });
       const [coreURL, wasmURL] = await Promise.all([
@@ -80,6 +80,7 @@ export function MediaPageClient() {
 
     try {
       const ffmpeg = await ensureEngine();
+      const { fetchFile } = await import("@ffmpeg/util");
       const inputName = `input.${getExt(selectedFile.name)}`;
       await ffmpeg.writeFile(inputName, await fetchFile(selectedFile));
 
