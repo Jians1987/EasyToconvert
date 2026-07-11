@@ -1328,9 +1328,6 @@ export function PdfPageClient() {
 
             {mode === "to-doc" && (
               <div className="space-y-3">
-                <p className="rounded-lg border border-indigo-500/30 bg-indigo-50/70 p-3 text-[11px] leading-relaxed text-indigo-700 dark:bg-indigo-950/10 dark:text-indigo-300">
-                  Powered by your local JOPDF engine. Note that files will be processed securely on this server rather than entirely in your browser.
-                </p>
 
                 {/* Progress indicator */}
                 {processing && tatrProgressPct > 0 && (
