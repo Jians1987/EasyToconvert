@@ -58,7 +58,7 @@ const extractTableWithNemotron = async (pngBase64: string): Promise<string[][]> 
 };
 
 type PdfMode = "merge" | "split" | "rotate" | "to-doc" | "to-excel" | "to-image" | "edit" | "protect";
-type DocEngine = "adobe" | "local";
+type DocEngine = "adobe" | "local" | "jopdf";
 
 interface TextItem {
   str: string;
@@ -875,6 +875,23 @@ export function PdfPageClient() {
               }
             );
           }
+        } else if (docEngine === "jopdf") {
+          setTatrProgressLabel("Sending to local JOPDF engine...");
+          setTatrProgressPct(10);
+          const formData = new FormData();
+          formData.append("file", file);
+          formData.append("format", "docx");
+          const res = await fetch("/api/pdf/jopdf-export", {
+            method: "POST",
+            body: formData,
+          });
+          if (!res.ok) {
+            const errBody = await res.json().catch(() => ({}));
+            throw new Error(errBody.error || "Failed to convert via JOPDF engine.");
+          }
+          blob = await res.blob();
+          setTatrProgressLabel("JOPDF conversion complete");
+          setTatrProgressPct(100);
         } else {
           blob = await convertPdfToDocx(
             file,
@@ -1258,7 +1275,7 @@ export function PdfPageClient() {
                 <div className="space-y-2">
                   <label className="text-[10px] uppercase font-bold text-slate-400">Word Conversion Engine</label>
                   <div className="grid gap-2 sm:grid-cols-2">
-                    {(["adobe", "local"] as const).map((engine) => (
+                    {(["adobe", "local", "jopdf"] as const).map((engine) => (
                       <button
                         key={engine}
                         type="button"
@@ -1269,11 +1286,15 @@ export function PdfPageClient() {
                             : "border-slate-200 bg-slate-50 text-slate-700 hover:border-indigo-300 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200"
                         }`}
                       >
-                        <span className="block font-bold">{engine === "adobe" ? "Adobe High Quality" : "Private Browser"}</span>
+                        <span className="block font-bold">
+                          {engine === "adobe" ? "Adobe API" : engine === "jopdf" ? "JOPDF App" : "Private Browser"}
+                        </span>
                         <span className="mt-1 block text-[10px] opacity-80">
                           {engine === "adobe"
                             ? "Best editable DOCX output with Adobe PDF Services."
-                            : "Runs locally; exact layout is image-based."}
+                            : engine === "jopdf"
+                            ? "Runs via local JOPDF.exe installation on server."
+                            : "Runs locally in browser; layout is image-based."}
                         </span>
                       </button>
                     ))}
