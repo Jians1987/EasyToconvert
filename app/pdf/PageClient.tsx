@@ -250,7 +250,7 @@ export function PdfPageClient() {
   const [rotatePages, setRotatePages] = useState("all");
   const [splitPages, setSplitPages] = useState("1");
   const [totalPages, setTotalPages] = useState(0);
-  const [docFidelity, setDocFidelity] = useState<"layout" | "text">("layout");
+  const [docFidelity, setDocFidelity] = useState<"layout" | "text" | "image">("layout");
   const [cloudEnhance, setCloudEnhance] = useState(false);
   // Engine selector for PDF → Excel. "tatr" = Microsoft Table Transformer (on-device DETR);
   // "cluster" = legacy X/Y text-position clustering.
@@ -1182,7 +1182,7 @@ export function PdfPageClient() {
               <div className="space-y-2">
                 <label className="text-[10px] uppercase font-bold text-slate-400">Conversion Mode</label>
                 <div className="flex space-x-2">
-                  {(["layout", "text"] as const).map((fidelity) => (
+                  {(["layout", "text", "image"] as const).map((fidelity) => (
                     <button
                       key={fidelity}
                       onClick={() => setDocFidelity(fidelity)}
@@ -1192,7 +1192,7 @@ export function PdfPageClient() {
                           : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200"
                       }`}
                     >
-                      {fidelity === "layout" ? "Exact Layout" : "Editable Text"}
+                      {fidelity === "layout" ? "Structured Text" : fidelity === "text" ? "Flowing Text" : "Exact Image"}
                     </button>
                   ))}
                 </div>

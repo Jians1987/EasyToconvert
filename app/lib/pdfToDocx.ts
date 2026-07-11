@@ -34,7 +34,7 @@ import {
   type PdfTextBlock,
 } from "./pdfTextExtractor";
 
-export type DocFidelity = "layout" | "text";
+export type DocFidelity = "layout" | "text" | "image";
 
 export interface DocxProgress {
   phase: "extract" | "structure" | "generate" | "done";
@@ -53,7 +53,7 @@ export async function convertPdfToDocx(
   password?: string,
   onProgress?: (p: DocxProgress) => void
 ): Promise<Blob> {
-  if (fidelity === "layout") {
+  if (fidelity === "image") {
     return convertPdfToImageDocx(file, password, onProgress);
   }
   // ── Phase 1: Extract text with full metadata ────────────────────────────
