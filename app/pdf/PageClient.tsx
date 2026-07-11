@@ -57,8 +57,8 @@ const extractTableWithNemotron = async (pngBase64: string): Promise<string[][]> 
   return grid;
 };
 
-type PdfMode = "merge" | "split" | "rotate" | "to-doc" | "to-excel" | "to-image" | "edit" | "protect";
-type DocEngine = "adobe" | "local" | "jopdf";
+type PdfMode = "merge" | "split" | "rotate" | "to-doc" | "to-excel" | "to-image" | "edit" | "protect" | "compress" | "image-to-pdf" | "word-to-pdf" | "excel-to-pdf" | "ppt-to-pdf";
+
 
 interface TextItem {
   str: string;
@@ -319,7 +319,7 @@ export function PdfPageClient() {
   const [splitPages, setSplitPages] = useState("1");
   const [totalPages, setTotalPages] = useState(0);
   const [docFidelity, setDocFidelity] = useState<"layout" | "text" | "image">("text");
-  const [docEngine, setDocEngine] = useState<DocEngine>("adobe");
+
   const [cloudEnhance, setCloudEnhance] = useState(false);
   // Engine selector for PDF → Excel. "tatr" = Microsoft Table Transformer (on-device DETR);
   // "cluster" = legacy X/Y text-position clustering.
@@ -443,6 +443,11 @@ export function PdfPageClient() {
       case "to-image": return "to Image";
       case "edit": return "Edit";
       case "protect": return "Protect";
+      case "compress": return "Compress";
+      case "image-to-pdf": return "Image to PDF";
+      case "word-to-pdf": return "Word to PDF";
+      case "excel-to-pdf": return "Excel to PDF";
+      case "ppt-to-pdf": return "PPT to PDF";
     }
   }, [mode]);
 
@@ -455,6 +460,11 @@ export function PdfPageClient() {
     "to-image": "Render each page of a PDF as a high-quality JPG image you can save individually.",
     edit: "Draw, annotate, add text, stamps, signatures, images, and shapes directly on PDF pages. Reorder, rotate, delete, and export.",
     protect: "Encrypt your PDF with a password. Apply advanced permissions to restrict printing, copying, and modifications.",
+    compress: "Reduce the file size of your PDF document without losing significant quality.",
+    "image-to-pdf": "Convert JPG, PNG, or other images into a single PDF document.",
+    "word-to-pdf": "Convert Word Documents (.docx, .doc) to PDF.",
+    "excel-to-pdf": "Convert Excel Spreadsheets (.xlsx, .xls) to PDF.",
+    "ppt-to-pdf": "Convert PowerPoint Presentations (.pptx, .ppt) to PDF.",
   };
 
   // Check if any uploaded PDFs are encrypted
@@ -854,28 +864,6 @@ export function PdfPageClient() {
       } else if (mode === "to-doc") {
         const file = selectedFiles[0];
         let blob: Blob;
-        if (docEngine === "adobe") {
-          try {
-            setTatrProgressLabel("Sending PDF to Adobe PDF Services...");
-            setTatrProgressPct(15);
-            blob = await convertPdfToDocxWithAdobe(file, inputPassword || undefined);
-            setTatrProgressLabel("Adobe high-quality Word document ready");
-            setTatrProgressPct(100);
-          } catch (error) {
-            console.warn("Adobe PDF Services conversion failed; using local fallback.", error);
-            setTatrProgressLabel("Adobe unavailable; using private browser fallback...");
-            setTatrProgressPct(20);
-            blob = await convertPdfToDocx(
-              file,
-              docFidelity,
-              inputPassword || undefined,
-              (p) => {
-                setTatrProgressLabel(p.message);
-                setTatrProgressPct(p.percent);
-              }
-            );
-          }
-        } else if (docEngine === "jopdf") {
           setTatrProgressLabel("Sending to local JOPDF engine...");
           setTatrProgressPct(10);
           const formData = new FormData();
@@ -892,24 +880,13 @@ export function PdfPageClient() {
           blob = await res.blob();
           setTatrProgressLabel("JOPDF conversion complete");
           setTatrProgressPct(100);
-        } else {
-          blob = await convertPdfToDocx(
-            file,
-            docFidelity,
-            inputPassword || undefined,
-            (p) => {
-              setTatrProgressLabel(p.message);
-              setTatrProgressPct(p.percent);
-            }
-          );
-        }
         const url = URL.createObjectURL(blob);
         setDownloadUrl(url);
 
         addHistoryItem({
           fileName: `${file.name.split(".")[0] || "document"}.docx`,
           fileSize: blob.size,
-          toolType: docEngine === "adobe" ? "pdf-to-doc-adobe" : "pdf-to-doc",
+          toolType: "pdf-to-doc",
           status: "success",
           downloadUrl: url,
         });
@@ -994,6 +971,80 @@ export function PdfPageClient() {
           fileName: `protected_${file.name || "document.pdf"}`,
           fileSize: blob.size,
           toolType: "pdf-protect",
+          status: "success",
+          downloadUrl: url,
+        });
+
+      } else if (mode === "compress") {
+        const file = selectedFiles[0];
+        const formData = new FormData();
+        formData.append("file", file);
+        const res = await fetch("/api/pdf/compress", {
+          method: "POST",
+          body: formData,
+        });
+        if (!res.ok) {
+           const errText = await res.text();
+           throw new Error(errText);
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        setDownloadUrl(url);
+        addHistoryItem({
+          fileName: `compressed_${file.name}`,
+          fileSize: blob.size,
+          toolType: "pdf-compress",
+          status: "success",
+          downloadUrl: url,
+        });
+
+      } else if (mode === "image-to-pdf") {
+        const pdf = await PdfLibDocument.create();
+        for (const file of selectedFiles) {
+           const imageBytes = await file.arrayBuffer();
+           let image;
+           if (file.type === "image/jpeg" || file.name.toLowerCase().endsWith(".jpg") || file.name.toLowerCase().endsWith(".jpeg")) {
+              image = await pdf.embedJpg(imageBytes);
+           } else if (file.type === "image/png" || file.name.toLowerCase().endsWith(".png")) {
+              image = await pdf.embedPng(imageBytes);
+           } else {
+              throw new Error("Only JPG and PNG are supported for Image to PDF");
+           }
+           const page = pdf.addPage([image.width, image.height]);
+           page.drawImage(image, { x: 0, y: 0, width: image.width, height: image.height });
+        }
+        const pdfBytes = await pdf.save();
+        const blob = new Blob([pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
+        const url = URL.createObjectURL(blob);
+        setDownloadUrl(url);
+        addHistoryItem({
+          fileName: `images_to_pdf_${Date.now()}.pdf`,
+          fileSize: blob.size,
+          toolType: "image-to-pdf",
+          status: "success",
+          downloadUrl: url,
+        });
+
+      } else if (mode === "word-to-pdf" || mode === "excel-to-pdf" || mode === "ppt-to-pdf") {
+        const file = selectedFiles[0];
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("mode", mode);
+        const res = await fetch("/api/pdf/office-to-pdf", {
+          method: "POST",
+          body: formData,
+        });
+        if (!res.ok) {
+           const errText = await res.text();
+           throw new Error(errText);
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        setDownloadUrl(url);
+        addHistoryItem({
+          fileName: `${file.name.replace(/\.[^/.]+$/, "")}.pdf`,
+          fileSize: blob.size,
+          toolType: mode,
           status: "success",
           downloadUrl: url,
         });
@@ -1132,6 +1183,11 @@ export function PdfPageClient() {
               { id: "to-image", label: "→ Image" },
               { id: "edit", label: "Edit" },
               { id: "protect", label: "Protect" },
+              { id: "compress", label: "Compress" },
+              { id: "image-to-pdf", label: "Img→PDF" },
+              { id: "word-to-pdf", label: "Word→PDF" },
+              { id: "excel-to-pdf", label: "Excel→PDF" },
+              { id: "ppt-to-pdf", label: "PPT→PDF" },
             ].map((t) => (
               <button
                 key={t.id}
@@ -1272,62 +1328,9 @@ export function PdfPageClient() {
 
             {mode === "to-doc" && (
               <div className="space-y-3">
-                <div className="space-y-2">
-                  <label className="text-[10px] uppercase font-bold text-slate-400">Word Conversion Engine</label>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    {(["adobe", "local", "jopdf"] as const).map((engine) => (
-                      <button
-                        key={engine}
-                        type="button"
-                        onClick={() => setDocEngine(engine)}
-                        className={`rounded-lg border px-3 py-2 text-left text-xs transition-all ${
-                          docEngine === engine
-                            ? "border-indigo-500 bg-indigo-600 text-white shadow-sm"
-                            : "border-slate-200 bg-slate-50 text-slate-700 hover:border-indigo-300 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200"
-                        }`}
-                      >
-                        <span className="block font-bold">
-                          {engine === "adobe" ? "Adobe API" : engine === "jopdf" ? "JOPDF App" : "Private Browser"}
-                        </span>
-                        <span className="mt-1 block text-[10px] opacity-80">
-                          {engine === "adobe"
-                            ? "Best editable DOCX output with Adobe PDF Services."
-                            : engine === "jopdf"
-                            ? "Runs via local JOPDF.exe installation on server."
-                            : "Runs locally in browser; layout is image-based."}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {docEngine === "local" && (
-                  <div className="space-y-2">
-                    <label className="text-[10px] uppercase font-bold text-slate-400">Private Browser Mode</label>
-                    <div className="flex space-x-2">
-                      {(["layout", "text"] as const).map((fidelity) => (
-                        <button
-                          key={fidelity}
-                          type="button"
-                          onClick={() => setDocFidelity(fidelity)}
-                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${
-                            docFidelity === fidelity
-                              ? "bg-indigo-600 text-white"
-                              : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200"
-                          }`}
-                        >
-                          {fidelity === "layout" ? "Exact Layout" : "Editable Text"}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {docEngine === "adobe" && (
-                  <p className="rounded-lg border border-amber-500/30 bg-amber-50/70 p-3 text-[11px] leading-relaxed text-amber-700 dark:bg-amber-950/10 dark:text-amber-300">
-                    Adobe High Quality sends the selected PDF to Adobe PDF Services from the server. Configure PDF_SERVICES_CLIENT_ID and PDF_SERVICES_CLIENT_SECRET to enable it in production.
-                  </p>
-                )}
+                <p className="rounded-lg border border-indigo-500/30 bg-indigo-50/70 p-3 text-[11px] leading-relaxed text-indigo-700 dark:bg-indigo-950/10 dark:text-indigo-300">
+                  Powered by your local JOPDF engine. Note that files will be processed securely on this server rather than entirely in your browser.
+                </p>
 
                 {/* Progress indicator */}
                 {processing && tatrProgressPct > 0 && (
