@@ -42,3 +42,6 @@ next-env.d.ts
 _dbg.mjs
 _dbg2.mjs
 _exceltest.mjs
+
+# test fixtures — use tests/fixtures/ as the canonical location
+*.pdf
