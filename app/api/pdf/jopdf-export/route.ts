@@ -1,74 +1,111 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { exec } from "child_process";
-import fs from "fs";
+import { promisify } from "util";
+import fs from "fs/promises";
 import path from "path";
 import os from "os";
-import { promisify } from "util";
+import crypto from "crypto";
 
 const execAsync = promisify(exec);
 
-export async function POST(req: NextRequest) {
+export const runtime = "nodejs";
+export const maxDuration = 60;
+
+const MAX_FILE_BYTES = 50 * 1024 * 1024;
+const SECRET = "6SxpFwYHcPrvdEvH8TGr";
+const JAVA_EXE = `"C:\\Users\\jeein\\AppData\\Roaming\\JOPDF\\tools\\pdf_tool\\jdk-17_x64\\bin\\java.exe"`;
+const CLASSPATH = `"C:\\Users\\jeein\\AppData\\Roaming\\JOPDF\\tools\\pdf_tool\\*;"`;
+
+function getSignString(outputPath: string): string {
+  const hash = crypto.createHash('md5');
+  hash.update(SECRET + outputPath + SECRET);
+  return hash.digest('hex');
+}
+
+function getJOPDFMode(format: string): string {
+  if (format === "docx" || format === "doc") return "pdf2word";
+  if (format === "xlsx" || format === "xls") return "pdf2office"; // For Excel, pdf2office handles it
+  if (format === "pptx" || format === "ppt") return "pdf2ppt";
+  if (format === "jpg" || format === "png") return "pdf2image";
+  return "pdf2word"; // Default
+}
+
+function getJOPDFOptionsString(format: string): string {
+  if (format === "xlsx" || format === "xls") return "format=excel;";
+  return `format=${format};`;
+}
+
+export async function POST(request: Request) {
+  let tmpInputPath = "";
+  let tmpOutputPath = "";
+
   try {
-    const formData = await req.formData();
-    const file = formData.get("file") as File | null;
+    const formData = await request.formData();
+    const file = formData.get("file");
     const format = formData.get("format") as string || "docx";
 
-    if (!file) {
-      return NextResponse.json({ error: "No file provided" }, { status: 400 });
+    if (!(file instanceof File)) {
+      return NextResponse.json({ error: "Upload a valid file to convert." }, { status: 400 });
     }
 
-    // Prepare temp files
+    if (file.size > MAX_FILE_BYTES) {
+      return NextResponse.json({ error: "File must be 50MB or smaller." }, { status: 413 });
+    }
+
+    const tmpDir = os.tmpdir();
+    const uniquePrefix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    
+    tmpInputPath = path.join(tmpDir, `${uniquePrefix}_input.pdf`);
+    tmpOutputPath = path.join(tmpDir, `${uniquePrefix}_output.${format}`);
+
+    // Write file to disk
     const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-    
-    const tempDir = os.tmpdir();
-    const inputPath = path.join(tempDir, `jopdf_input_${Date.now()}.pdf`);
-    const outputPath = path.join(tempDir, `jopdf_output_${Date.now()}.${format}`);
+    await fs.writeFile(tmpInputPath, Buffer.from(arrayBuffer));
 
-    fs.writeFileSync(inputPath, buffer);
+    // Base64 encode paths
+    const b64Input = Buffer.from(tmpInputPath).toString("base64");
+    const b64Output = Buffer.from(tmpOutputPath).toString("base64");
 
-    // Call JOPDF.exe (Assuming it takes standard input/output arguments)
-    // Note: If JOPDF does not support CLI, this will likely hang or fail.
-    const jopdfPath = `"C:\\Program Files\\JOPDF\\JOPDF.exe"`;
+    // Generate Signature
+    const sign = getSignString(b64Output);
     
-    // We try a common syntax: JOPDF.exe -i input.pdf -o output.ext
-    const command = `${jopdfPath} -i "${inputPath}" -o "${outputPath}"`;
+    const jopdfMode = getJOPDFMode(format);
+    const jopdfOptions = getJOPDFOptionsString(format);
+
+    // Run JOPDF backend
+    const cmd = `${JAVA_EXE} -cp ${CLASSPATH} Main -convert ${jopdfMode} -options "${jopdfOptions}" -i ${b64Input} -o ${b64Output} -sign ${sign}`;
     
-    try {
-      await execAsync(command, { timeout: 30000 }); // 30 second timeout
-    } catch (cmdErr: any) {
-      console.error("JOPDF Execution Error:", cmdErr);
-      
-      // Clean up input
-      if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
-      
-      return NextResponse.json({ 
-        error: "JOPDF execution failed or timed out. Ensure the software supports headless command-line execution.",
-        details: cmdErr.message
-      }, { status: 500 });
+    const { stdout, stderr } = await execAsync(cmd);
+    
+    if (!stdout.includes("isOK: true")) {
+      console.error(stdout, stderr);
+      throw new Error(`JOPDF local extraction failed: ${stderr || stdout}`);
     }
 
-    if (!fs.existsSync(outputPath)) {
-      if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
-      return NextResponse.json({ error: "JOPDF did not generate an output file." }, { status: 500 });
-    }
+    // Read the output file
+    const outputBuffer = await fs.readFile(tmpOutputPath);
 
-    const outputBuffer = fs.readFileSync(outputPath);
-    
-    // Clean up
-    fs.unlinkSync(inputPath);
-    fs.unlinkSync(outputPath);
+    // Return the converted file
+    let contentType = "application/octet-stream";
+    if (format === "docx") contentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    if (format === "xlsx") contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    if (format === "pptx") contentType = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+    if (format === "jpg") contentType = "image/jpeg";
 
-    // Return the generated file
-    return new NextResponse(outputBuffer, {
-      status: 200,
+    return new Response(new Uint8Array(outputBuffer), {
       headers: {
-        "Content-Type": "application/octet-stream",
+        "Content-Type": contentType,
         "Content-Disposition": `attachment; filename="jopdf_converted.${format}"`,
+        "Cache-Control": "no-store",
       },
     });
-  } catch (error: any) {
-    console.error("JOPDF route error:", error);
-    return NextResponse.json({ error: error.message || "Internal server error" }, { status: 500 });
+  } catch (error) {
+    console.error("JOPDF-export error:", error);
+    const message = error instanceof Error ? error.message : "JOPDF PDF conversion failed.";
+    return NextResponse.json({ error: message }, { status: 500 });
+  } finally {
+    // Cleanup temp files
+    if (tmpInputPath) await fs.unlink(tmpInputPath).catch(() => {});
+    if (tmpOutputPath) await fs.unlink(tmpOutputPath).catch(() => {});
   }
 }
