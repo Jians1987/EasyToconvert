@@ -57,7 +57,8 @@ test.describe("PDF suite", () => {
     await page.getByRole("button", { name: "→ Word" }).click();
     for (const fidelity of ["Exact Layout", "Editable Text"]) {
       await uploadPdf(page);
-      await page.getByRole("button", { name: fidelity }).click();
+      await page.getByRole("button", { name: "Private Browser" }).click();
+      await page.getByRole("button", { name: fidelity, exact: true }).click();
       await page.getByRole("button", { name: "Process PDF to Word" }).click();
       await expect(page.getByRole("link", { name: "Download .docx" })).toBeVisible({
         timeout: 20_000,

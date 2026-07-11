@@ -58,6 +58,7 @@ const extractTableWithNemotron = async (pngBase64: string): Promise<string[][]> 
 };
 
 type PdfMode = "merge" | "split" | "rotate" | "to-doc" | "to-excel" | "to-image" | "edit" | "protect";
+type DocEngine = "adobe" | "local";
 
 interface TextItem {
   str: string;
@@ -122,6 +123,34 @@ const parsePageSelection = (value: string, total: number): number[] => {
   return Array.from(pages);
 };
 
+async function convertPdfToDocxWithAdobe(
+  file: File,
+  password?: string
+): Promise<Blob> {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("ocrLocale", "en-US");
+  if (password) formData.append("password", password);
+
+  const response = await fetch("/api/pdf/adobe-export", {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!response.ok) {
+    let message = "Adobe PDF Services conversion failed.";
+    try {
+      const payload = await response.json();
+      if (payload?.error) message = payload.error;
+    } catch {
+      const text = await response.text();
+      if (text) message = text.slice(0, 200);
+    }
+    throw new Error(message);
+  }
+
+  return response.blob();
+}
 const tableFromOcrText = (text: string): string[][] =>
   text
     .split("\n")
@@ -289,7 +318,8 @@ export function PdfPageClient() {
   const [rotatePages, setRotatePages] = useState("all");
   const [splitPages, setSplitPages] = useState("1");
   const [totalPages, setTotalPages] = useState(0);
-  const [docFidelity, setDocFidelity] = useState<"layout" | "text" | "image">("layout");
+  const [docFidelity, setDocFidelity] = useState<"layout" | "text" | "image">("text");
+  const [docEngine, setDocEngine] = useState<DocEngine>("adobe");
   const [cloudEnhance, setCloudEnhance] = useState(false);
   // Engine selector for PDF → Excel. "tatr" = Microsoft Table Transformer (on-device DETR);
   // "cluster" = legacy X/Y text-position clustering.
@@ -420,7 +450,7 @@ export function PdfPageClient() {
     merge: "Combine multiple PDF files into one document. Set an optional password to encrypt the output.",
     split: "Extract specific pages into a separate PDF file.",
     rotate: "Rotate all pages or a specific set of pages by 90°, 180°, or 270°.",
-    "to-doc": "Convert a PDF into a Word Document (.docx). Exact Layout uses PDFium rendering for visual fidelity; Editable Text keeps selectable text.",
+    "to-doc": "Convert a PDF into a Word Document (.docx). Adobe High Quality creates the best editable output; Private Browser remains available as a local fallback.",
     "to-excel": "Extract tables from a PDF into an Excel Spreadsheet (.xlsx). Uses Microsoft Table Transformer (on-device) or Nemotron Cloud AI.",
     "to-image": "Render each page of a PDF as a high-quality JPG image you can save individually.",
     edit: "Draw, annotate, add text, stamps, signatures, images, and shapes directly on PDF pages. Reorder, rotate, delete, and export.",
@@ -823,22 +853,46 @@ export function PdfPageClient() {
 
       } else if (mode === "to-doc") {
         const file = selectedFiles[0];
-        const blob = await convertPdfToDocx(
-          file,
-          docFidelity,
-          inputPassword || undefined,
-          (p) => {
-            setTatrProgressLabel(p.message);
-            setTatrProgressPct(p.percent);
+        let blob: Blob;
+        if (docEngine === "adobe") {
+          try {
+            setTatrProgressLabel("Sending PDF to Adobe PDF Services...");
+            setTatrProgressPct(15);
+            blob = await convertPdfToDocxWithAdobe(file, inputPassword || undefined);
+            setTatrProgressLabel("Adobe high-quality Word document ready");
+            setTatrProgressPct(100);
+          } catch (error) {
+            console.warn("Adobe PDF Services conversion failed; using local fallback.", error);
+            setTatrProgressLabel("Adobe unavailable; using private browser fallback...");
+            setTatrProgressPct(20);
+            blob = await convertPdfToDocx(
+              file,
+              docFidelity,
+              inputPassword || undefined,
+              (p) => {
+                setTatrProgressLabel(p.message);
+                setTatrProgressPct(p.percent);
+              }
+            );
           }
-        );
+        } else {
+          blob = await convertPdfToDocx(
+            file,
+            docFidelity,
+            inputPassword || undefined,
+            (p) => {
+              setTatrProgressLabel(p.message);
+              setTatrProgressPct(p.percent);
+            }
+          );
+        }
         const url = URL.createObjectURL(blob);
         setDownloadUrl(url);
 
         addHistoryItem({
           fileName: `${file.name.split(".")[0] || "document"}.docx`,
           fileSize: blob.size,
-          toolType: "pdf-to-doc",
+          toolType: docEngine === "adobe" ? "pdf-to-doc-adobe" : "pdf-to-doc",
           status: "success",
           downloadUrl: url,
         });
@@ -1200,23 +1254,60 @@ export function PdfPageClient() {
             )}
 
             {mode === "to-doc" && (
-              <div className="space-y-2">
-                <label className="text-[10px] uppercase font-bold text-slate-400">Conversion Mode</label>
-                <div className="flex space-x-2">
-                  {(["layout", "text"] as const).map((fidelity) => (
-                    <button
-                      key={fidelity}
-                      onClick={() => setDocFidelity(fidelity)}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${
-                        docFidelity === fidelity
-                          ? "bg-indigo-600 text-white"
-                          : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200"
-                      }`}
-                    >
-                      {fidelity === "layout" ? "Exact Layout" : "Editable Text"}
-                    </button>
-                  ))}
+              <div className="space-y-3">
+                <div className="space-y-2">
+                  <label className="text-[10px] uppercase font-bold text-slate-400">Word Conversion Engine</label>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {(["adobe", "local"] as const).map((engine) => (
+                      <button
+                        key={engine}
+                        type="button"
+                        onClick={() => setDocEngine(engine)}
+                        className={`rounded-lg border px-3 py-2 text-left text-xs transition-all ${
+                          docEngine === engine
+                            ? "border-indigo-500 bg-indigo-600 text-white shadow-sm"
+                            : "border-slate-200 bg-slate-50 text-slate-700 hover:border-indigo-300 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200"
+                        }`}
+                      >
+                        <span className="block font-bold">{engine === "adobe" ? "Adobe High Quality" : "Private Browser"}</span>
+                        <span className="mt-1 block text-[10px] opacity-80">
+                          {engine === "adobe"
+                            ? "Best editable DOCX output with Adobe PDF Services."
+                            : "Runs locally; exact layout is image-based."}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
+
+                {docEngine === "local" && (
+                  <div className="space-y-2">
+                    <label className="text-[10px] uppercase font-bold text-slate-400">Private Browser Mode</label>
+                    <div className="flex space-x-2">
+                      {(["layout", "text"] as const).map((fidelity) => (
+                        <button
+                          key={fidelity}
+                          type="button"
+                          onClick={() => setDocFidelity(fidelity)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${
+                            docFidelity === fidelity
+                              ? "bg-indigo-600 text-white"
+                              : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200"
+                          }`}
+                        >
+                          {fidelity === "layout" ? "Exact Layout" : "Editable Text"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {docEngine === "adobe" && (
+                  <p className="rounded-lg border border-amber-500/30 bg-amber-50/70 p-3 text-[11px] leading-relaxed text-amber-700 dark:bg-amber-950/10 dark:text-amber-300">
+                    Adobe High Quality sends the selected PDF to Adobe PDF Services from the server. Configure PDF_SERVICES_CLIENT_ID and PDF_SERVICES_CLIENT_SECRET to enable it in production.
+                  </p>
+                )}
+
                 {/* Progress indicator */}
                 {processing && tatrProgressPct > 0 && (
                   <div className="mt-2">

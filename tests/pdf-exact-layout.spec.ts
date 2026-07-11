@@ -22,7 +22,8 @@ async function convert(page: Page, mode: "Exact Layout" | "Editable Text") {
     mimeType: "application/pdf",
     buffer: await makePdf(),
   });
-  await page.getByRole("button", { name: mode }).click();
+  await page.getByRole("button", { name: "Private Browser" }).click();
+  await page.getByRole("button", { name: mode, exact: true }).click();
   await page.getByRole("button", { name: "Process PDF to Word" }).click();
   const [download] = await Promise.all([
     page.waitForEvent("download"),
