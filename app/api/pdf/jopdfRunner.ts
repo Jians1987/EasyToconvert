@@ -93,6 +93,10 @@ export async function runJopdfTask(options: JopdfTaskOptions): Promise<Buffer> {
     if (err.code === "ETIMEDOUT") {
       throw new Error("JOPDF processing timed out after 45 seconds.");
     }
+    const errMsg = String(err.message || "");
+    if (errMsg.includes("command not found") || errMsg.includes("ENOENT") || err.code === 127) {
+      throw new Error("Java (JRE/JDK) is not installed on this server environment. Please install Java or set JOPDF_JAVA_EXE in environment variables.");
+    }
     throw err;
   } finally {
     await fs.unlink(tmpInputPath).catch(() => {});

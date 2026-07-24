@@ -864,7 +864,8 @@ export function PdfPageClient() {
       } else if (mode === "to-doc") {
         const file = selectedFiles[0];
         let blob: Blob;
-          setTatrProgressLabel("Sending to local JOPDF engine...");
+        try {
+          setTatrProgressLabel("Processing PDF to Word...");
           setTatrProgressPct(10);
           const formData = new FormData();
           formData.append("file", file);
@@ -875,11 +876,25 @@ export function PdfPageClient() {
           });
           if (!res.ok) {
             const errBody = await res.json().catch(() => ({}));
-            throw new Error(errBody.error || "Failed to convert via JOPDF engine.");
+            throw new Error(errBody.error || "Server engine unavailable.");
           }
           blob = await res.blob();
-          setTatrProgressLabel("JOPDF conversion complete");
+          setTatrProgressLabel("Conversion complete");
           setTatrProgressPct(100);
+        } catch (serverErr) {
+          console.warn("Server conversion unavailable, falling back to private browser engine:", serverErr);
+          setTatrProgressLabel("Using private browser conversion engine...");
+          setTatrProgressPct(20);
+          blob = await convertPdfToDocx(
+            file,
+            "text",
+            inputPassword || undefined,
+            (p) => {
+              setTatrProgressLabel(p.message);
+              setTatrProgressPct(p.percent);
+            }
+          );
+        }
         const url = URL.createObjectURL(blob);
         setDownloadUrl(url);
 
