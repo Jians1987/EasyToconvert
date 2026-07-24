@@ -887,7 +887,7 @@ export function PdfPageClient() {
           setTatrProgressPct(20);
           blob = await convertPdfToDocx(
             file,
-            "text",
+            "layout",
             inputPassword || undefined,
             (p) => {
               setTatrProgressLabel(p.message);
