@@ -30,9 +30,14 @@ type ConversionContextType = {
 };
 const ConversionContext = createContext<ConversionContextType | undefined>(undefined);
 
+import { AuthProvider } from "@/context/AuthContext";
+import AuthModal from "@/components/AuthModal";
+
 export function Providers({ children }: { children: React.ReactNode }) {
   // Theme State
   const [theme, setTheme] = useState<Theme>("dark");
+  // ... (keep rest)
+
 
   // localStorage can throw in private-browsing mode (Safari) or when full.
   const safeSetItem = (key: string, value: string) => {
@@ -156,11 +161,14 @@ export function Providers({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <ThemeContext.Provider value={{ theme, toggleTheme }}>
-      <ConversionContext.Provider value={{ history, addHistoryItem, clearHistory, favorites, toggleFavorite }}>
-        {children}
-      </ConversionContext.Provider>
-    </ThemeContext.Provider>
+    <AuthProvider>
+      <ThemeContext.Provider value={{ theme, toggleTheme }}>
+        <ConversionContext.Provider value={{ history, addHistoryItem, clearHistory, favorites, toggleFavorite }}>
+          {children}
+          <AuthModal />
+        </ConversionContext.Provider>
+      </ThemeContext.Provider>
+    </AuthProvider>
   );
 }
 

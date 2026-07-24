@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { useConversions } from "@/app/providers";
+import { useAuth } from "@/context/AuthContext";
 import Link from "next/link";
 import {
   TrendingUp,
@@ -19,11 +20,15 @@ import {
   Copy,
   Check,
   Star,
-  Download
+  Download,
+  UserCheck,
+  ShieldCheck,
+  Zap
 } from "lucide-react";
 
 export default function Dashboard() {
   const { history, clearHistory, favorites, toggleFavorite } = useConversions();
+  const { user, openAuthModal, logout } = useAuth();
   const [apiKey, setApiKey] = useState("");
   const [showKey, setShowKey] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -59,18 +64,47 @@ export default function Dashboard() {
   return (
     <div className="space-y-8">
       {/* Welcome Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">User Dashboard</h1>
-          <p className="text-sm text-slate-500 dark:text-slate-400">
-            Manage your recent conversions, API credentials, and favorites.
-          </p>
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-6 rounded-2xl border border-slate-200/80 dark:border-slate-800/80 bg-white/60 dark:bg-slate-900/60 backdrop-blur-xl shadow-xl">
+        <div className="flex items-center space-x-4">
+          <div className="p-3.5 rounded-2xl bg-gradient-to-tr from-indigo-500 via-purple-500 to-pink-500 text-white shadow-lg shadow-indigo-500/20">
+            <UserCheck className="w-7 h-7" />
+          </div>
+          <div>
+            <div className="flex items-center space-x-2">
+              <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">
+                {user ? `Welcome back, ${user.name}` : "User Dashboard"}
+              </h1>
+              {user && (
+                <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-gradient-to-r from-amber-500 to-emerald-500 text-white shadow-sm">
+                  <Sparkles className="w-3 h-3 fill-current" />
+                  <span>Unlimited Pro</span>
+                </span>
+              )}
+            </div>
+            <p className="text-xs md:text-sm text-slate-500 dark:text-slate-400 mt-0.5">
+              {user
+                ? `Logged in as ${user.email} • All conversion options & high-speed servers unlocked.`
+                : "Sign in to unlock Unlimited Options across all tools and export features."}
+            </p>
+          </div>
         </div>
-        <div className="flex items-center space-x-2">
-          <span className="text-xs px-2.5 py-1 rounded-full border border-emerald-200/50 dark:border-emerald-800/40 bg-emerald-50/50 dark:bg-emerald-950/20 text-emerald-600 dark:text-emerald-400 font-semibold flex items-center space-x-1.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span>Unlimited Free Account</span>
-          </span>
+        <div className="flex items-center space-x-3">
+          {user ? (
+            <button
+              onClick={logout}
+              className="px-4 py-2 rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 transition-all"
+            >
+              Sign Out
+            </button>
+          ) : (
+            <button
+              onClick={openAuthModal}
+              className="px-5 py-2.5 rounded-xl text-xs font-extrabold bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 text-white shadow-lg shadow-indigo-500/20 hover:opacity-90 transition-all flex items-center space-x-1.5"
+            >
+              <Zap className="w-4 h-4 fill-current" />
+              <span>Sign In & Unlock Unlimited</span>
+            </button>
+          )}
         </div>
       </div>
 
