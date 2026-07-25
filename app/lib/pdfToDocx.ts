@@ -15,17 +15,15 @@ import {
   convertInchesToTwip,
 } from "docx";
 import {
-  extractPdfText,
   groupIntoLines,
   groupIntoBlocks,
   type PdfTextItem,
-  type PdfTextBlock,
 } from "./pdfTextExtractor";
-import { renderPdfWithPdfium } from "./pdfiumRenderer";
 
-// layout: structured editable output (paragraph detection, headings, bold/italic, tables)
-// image:  pixel-perfect image embed per page — exact visual, not editable
-// text:   plain text concatenation — simple and fast
+// layout: structured editable output — paragraph detection, headings, bold/italic, tables.
+//         Scanned pages are automatically OCR'd if ocrFallback is not "none".
+// image:  pixel-perfect image embed per page — exact visual, not editable.
+// text:   plain text concatenation — simple and fast.
 export type DocFidelity = "layout" | "text" | "image";
 
 export interface DocxProgress {
@@ -37,8 +35,11 @@ export interface DocxProgress {
 }
 
 export interface ConvertDocxOptions {
-  imageScale?: number; // render scale for image mode — 2 = standard, 3 = Pro quality
+  imageScale?: number;         // render scale for image mode — 2=standard, 3=Pro quality
+  ocrFallback?: "none" | "local" | "cloud"; // "local"=Tesseract.js, "cloud"=Nemotron
 }
+
+// ── Public API ───────────────────────────────────────────────────────────────
 
 export async function convertPdfToDocx(
   file: File,
@@ -48,66 +49,115 @@ export async function convertPdfToDocx(
   options?: ConvertDocxOptions
 ): Promise<Blob> {
   const scale = options?.imageScale ?? 2;
+  const ocrFallback = options?.ocrFallback ?? "none";
 
   if (fidelity === "image") {
-    return convertPdfToImageDocx(file, password, onProgress, scale);
+    return convertToImageDocx(file, password, onProgress, scale);
   }
 
-  // ── Phase 1: Extract text ────────────────────────────────────────────────
-  onProgress?.({ phase: "extract", message: "Extracting text from PDF…", percent: 5 });
-  const { items: pageItems, numPages } = await extractPdfText(file, password);
-  onProgress?.({ phase: "extract", message: `Extracted ${numPages} page(s)`, percent: 25 });
+  // Load PDF.js ONCE — reuse for text extraction AND rendering of scanned pages.
+  onProgress?.({ phase: "extract", message: "Loading PDF…", percent: 3 });
+  const pdfjsLib = await loadPdfJs();
+  const pdf = await pdfjsLib.getDocument({
+    data: new Uint8Array(await file.arrayBuffer()),
+    password: password || undefined,
+  }).promise;
 
-  // ── Phase 2: Structure detection ─────────────────────────────────────────
-  onProgress?.({ phase: "structure", message: "Analysing document structure…", percent: 30 });
+  const numPages: number = pdf.numPages;
+  const allElements: Array<Paragraph | Table> = [];
 
-  const allParagraphs: Array<Paragraph | Table> = [];
-
-  for (let pageIdx = 0; pageIdx < pageItems.length; pageIdx++) {
+  for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+    const basePercent = 5 + Math.round(((pageNum - 1) / numPages) * 80);
     onProgress?.({
-      phase: "structure",
-      message: `Analysing page ${pageIdx + 1} of ${numPages}…`,
-      percent: 30 + Math.round((pageIdx / numPages) * 30),
-      page: pageIdx + 1,
+      phase: "extract",
+      message: `Analysing page ${pageNum} of ${numPages}…`,
+      percent: basePercent,
+      page: pageNum,
       totalPages: numPages,
     });
 
-    const pageItemList = pageItems[pageIdx];
-    if (pageItemList.length === 0) continue;
+    const page = await pdf.getPage(pageNum);
 
-    if (fidelity === "text") {
-      const text = pageItemList.map((i) => i.str).join(" ");
-      if (text.trim()) {
-        allParagraphs.push(
-          new Paragraph({
-            children: [new TextRun({ text: text.trim(), font: "Calibri" })],
-            spacing: { after: convertInchesToTwip(0.15) },
-          })
-        );
+    // ── Extract embedded text ──────────────────────────────────────────────
+    const textItems = await extractPageTextItems(page);
+    const pageText = textItems.map((i) => i.str).join("");
+    const isScanned = looksScanned(pageText);
+
+    if (!isScanned) {
+      // ── Structured text extraction ─────────────────────────────────────
+      const elements =
+        fidelity === "text"
+          ? buildPlainTextParagraphs(textItems)
+          : buildStructuredElements(textItems);
+
+      allElements.push(...elements);
+    } else if (ocrFallback !== "none") {
+      // ── Scanned page: render → OCR → Word paragraphs ──────────────────
+      onProgress?.({
+        phase: "extract",
+        message: `Page ${pageNum}: scanned — rendering for OCR…`,
+        percent: basePercent,
+        page: pageNum,
+        totalPages: numPages,
+      });
+
+      const canvas = await renderPdfJsPageToCanvas(page, 3.0);
+
+      if (ocrFallback === "cloud") {
+        onProgress?.({
+          phase: "extract",
+          message: `Page ${pageNum}: Cloud OCR (Nemotron)…`,
+          percent: basePercent + 1,
+          page: pageNum,
+          totalPages: numPages,
+        });
+        const { ocrImageWithNemotron } = await import("./ocr");
+        const result = await ocrImageWithNemotron(canvas);
+        allElements.push(...rawTextToParagraphs(result.text, pageNum));
+      } else {
+        // local Tesseract.js
+        const Tesseract = (await import("tesseract.js")).default;
+        const stepSize = Math.max(1, Math.floor(80 / numPages));
+        const result = await Tesseract.recognize(canvas, "eng", {
+          logger: (m: { status: string; progress: number }) => {
+            if (m.status === "recognizing text") {
+              onProgress?.({
+                phase: "extract",
+                message: `Page ${pageNum}: OCR ${Math.round(m.progress * 100)}%…`,
+                percent: Math.min(basePercent + Math.round(m.progress * stepSize), 84),
+                page: pageNum,
+                totalPages: numPages,
+              });
+            }
+          },
+        });
+        allElements.push(...tesseractDataToParagraphs(result.data));
       }
     } else {
-      // layout: full structure detection — headings, paragraphs, tables, bold/italic
-      const lines = groupIntoLines(pageItemList);
-      const { blocks, medianFontSize } = groupIntoBlocks(lines);
+      // Scanned but no OCR — add a placeholder so the page isn't silently dropped
+      allElements.push(
+        new Paragraph({
+          children: [
+            new TextRun({
+              text: `[Page ${pageNum}: scanned image — enable OCR to extract text]`,
+              italics: true,
+              color: "888888",
+              font: "Calibri",
+              size: 20,
+            }),
+          ],
+          spacing: { after: convertInchesToTwip(0.2) },
+        })
+      );
+    }
 
-      for (const block of blocks) {
-        const element = blockToDocxElement(block, medianFontSize);
-        if (element) allParagraphs.push(element);
-      }
-
-      // Page break between pages (except after the last page)
-      if (pageIdx < pageItems.length - 1) {
-        allParagraphs.push(
-          new Paragraph({ children: [], pageBreakBefore: true })
-        );
-      }
+    // Page break between pages (skip after the last page)
+    if (pageNum < numPages) {
+      allElements.push(new Paragraph({ children: [], pageBreakBefore: true }));
     }
   }
 
-  onProgress?.({ phase: "structure", message: `Found ${allParagraphs.length} element(s)`, percent: 60 });
-
-  // ── Phase 3: Generate DOCX ───────────────────────────────────────────────
-  onProgress?.({ phase: "generate", message: "Generating Word document…", percent: 65 });
+  onProgress?.({ phase: "generate", message: "Generating Word document…", percent: 88 });
 
   const doc = new Document({
     sections: [
@@ -122,95 +172,241 @@ export async function convertPdfToDocx(
             },
           },
         },
-        children: allParagraphs,
+        children: allElements,
       },
     ],
   });
 
-  onProgress?.({ phase: "generate", message: "Packing document…", percent: 90 });
+  onProgress?.({ phase: "generate", message: "Packing document…", percent: 95 });
   const blob = await Packer.toBlob(doc);
   onProgress?.({ phase: "done", message: "Word document ready", percent: 100 });
   return blob;
 }
 
+// ── Scanned-page helpers ─────────────────────────────────────────────────────
+
+/** True when a page has no meaningful embedded text (likely scanned). */
+function looksScanned(text: string): boolean {
+  return text.replace(/\s/g, "").length < 15;
+}
+
+/** Render a single PDF.js page to a canvas at the given scale (for OCR). */
+async function renderPdfJsPageToCanvas(
+  page: any,
+  scale: number
+): Promise<HTMLCanvasElement> {
+  const viewport = page.getViewport({ scale });
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.ceil(viewport.width);
+  canvas.height = Math.ceil(viewport.height);
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas unavailable");
+  await page.render({ canvasContext: ctx, viewport }).promise;
+  return canvas;
+}
+
+/** Convert raw OCR text to Word paragraphs (split on blank lines). */
+function rawTextToParagraphs(text: string, _pageNum?: number): Paragraph[] {
+  return text
+    .split(/\n{2,}/)
+    .map((t) => t.replace(/\n/g, " ").trim())
+    .filter((t) => t.length > 2)
+    .map(
+      (t) =>
+        new Paragraph({
+          children: [new TextRun({ text: t, font: "Calibri", size: 24 })],
+          spacing: { after: convertInchesToTwip(0.12) },
+          alignment: AlignmentType.JUSTIFIED,
+        })
+    );
+}
+
+/**
+ * Convert Tesseract result data into Word paragraphs.
+ * Uses paragraph-level data for confidence filtering and structure.
+ */
+function tesseractDataToParagraphs(data: any): Paragraph[] {
+  const paras: Paragraph[] = [];
+
+  // Use Tesseract's paragraph array when available
+  if (Array.isArray(data.paragraphs) && data.paragraphs.length > 0) {
+    for (const para of data.paragraphs) {
+      if (!para.text?.trim()) continue;
+      if ((para.confidence ?? 100) < 20) continue; // skip near-garbage
+
+      const text = para.text.replace(/\n/g, " ").trim();
+      if (text.length < 2) continue;
+
+      // Rough heading heuristic: short, high-confidence paragraph
+      const wordCount = text.split(/\s+/).length;
+      const isLikelyHeading = wordCount <= 8 && (para.confidence ?? 0) > 70;
+
+      if (isLikelyHeading && wordCount <= 5) {
+        paras.push(
+          new Paragraph({
+            heading: HeadingLevel.HEADING_2,
+            children: [new TextRun({ text, bold: true, font: "Calibri" })],
+            spacing: { before: convertInchesToTwip(0.2), after: convertInchesToTwip(0.05) },
+          })
+        );
+      } else {
+        paras.push(
+          new Paragraph({
+            children: [new TextRun({ text, font: "Calibri", size: 24 })],
+            spacing: { after: convertInchesToTwip(0.1) },
+            alignment: AlignmentType.JUSTIFIED,
+          })
+        );
+      }
+    }
+  } else {
+    // Fallback: parse raw text
+    return rawTextToParagraphs(data.text ?? "");
+  }
+
+  return paras;
+}
+
+// ── Embedded-text helpers ────────────────────────────────────────────────────
+
+/** Extract text items from a single PDF.js page. */
+async function extractPageTextItems(page: any): Promise<PdfTextItem[]> {
+  const content = await page.getTextContent();
+  const items: PdfTextItem[] = [];
+
+  for (const item of content.items as any[]) {
+    if (!item.str?.trim() && !item.hasEOL) continue;
+    const [a, , , d, tx, ty] = item.transform as number[];
+    const effectiveFontSize = Math.max(Math.abs(a), Math.abs(d), item.fontSize ?? 10);
+
+    let color: string | undefined;
+    if (Array.isArray(item.color) && item.color.length === 3) {
+      const [r, g, b] = item.color as number[];
+      if (r !== 0 || g !== 0 || b !== 0) {
+        color = [r, g, b]
+          .map((c) => Math.round((c <= 1 ? c * 255 : c)).toString(16).padStart(2, "0"))
+          .join("");
+      }
+    }
+
+    items.push({
+      str: item.str ?? "",
+      x: tx,
+      y: ty,
+      width: item.width ?? 0,
+      height: item.height ?? effectiveFontSize,
+      fontName: (item.fontName ?? "").replace(/^g_d[0-9]+_/, ""),
+      fontSize: effectiveFontSize,
+      hasEOL: !!item.hasEOL,
+      color,
+    });
+  }
+
+  return items;
+}
+
+function buildPlainTextParagraphs(textItems: PdfTextItem[]): Paragraph[] {
+  const text = textItems.map((i) => i.str).join(" ").trim();
+  if (!text) return [];
+  return [
+    new Paragraph({
+      children: [new TextRun({ text, font: "Calibri", size: 24 })],
+      spacing: { after: convertInchesToTwip(0.15) },
+    }),
+  ];
+}
+
+function buildStructuredElements(textItems: PdfTextItem[]): Array<Paragraph | Table> {
+  if (textItems.length === 0) return [];
+  const lines = groupIntoLines(textItems);
+  const { blocks, medianFontSize } = groupIntoBlocks(lines);
+  const elements: Array<Paragraph | Table> = [];
+  for (const block of blocks) {
+    const el = blockToDocxElement(block, medianFontSize);
+    if (el) elements.push(el);
+  }
+  return elements;
+}
+
 // ── Image-based conversion (exact visual) ───────────────────────────────────
 
-async function convertPdfToImageDocx(
+async function convertToImageDocx(
   file: File,
   password?: string,
   onProgress?: (p: DocxProgress) => void,
   scale = 2
 ): Promise<Blob> {
+  // Try pdfium first (higher quality), fall back to PDF.js
   try {
-    return await convertPdfToImageDocxWithPdfium(file, password, onProgress, scale);
-  } catch (error) {
-    console.warn("PDFium exact-layout rendering failed; falling back to PDF.js.", error);
-    return convertPdfToImageDocxWithPdfJs(file, password, onProgress, scale);
+    const { renderPdfWithPdfium } = await import("./pdfiumRenderer");
+    onProgress?.({ phase: "extract", message: `Rendering pages at ${scale}× quality…`, percent: 5 });
+
+    const renderedPages = await renderPdfWithPdfium(file, {
+      password,
+      scale,
+      imageType: "image/png",
+      onProgress: (page, totalPages) =>
+        onProgress?.({
+          phase: "extract",
+          message: `Rendering page ${page} of ${totalPages}…`,
+          percent: 5 + Math.round((page / totalPages) * 80),
+          page,
+          totalPages,
+        }),
+    });
+
+    const sections = await Promise.all(
+      renderedPages.map(async (rp) => ({
+        properties: {
+          page: {
+            size: {
+              width: Math.round(rp.originalWidth * 20),
+              height: Math.round(rp.originalHeight * 20),
+            },
+            margin: { top: 0, right: 0, bottom: 0, left: 0 },
+          },
+        },
+        children: [
+          new Paragraph({
+            spacing: { before: 0, after: 0, line: 1 },
+            children: [
+              new ImageRun({
+                type: "png",
+                data: new Uint8Array(await rp.blob.arrayBuffer()),
+                transformation: {
+                  width: Math.floor(rp.originalWidth * 4 / 3) - 1,
+                  height: Math.floor(rp.originalHeight * 4 / 3) - 1,
+                },
+                altText: {
+                  title: `Page ${rp.page}`,
+                  description: "Exact visual rendering of the original PDF page",
+                  name: `Page ${rp.page}`,
+                },
+              }),
+            ],
+          }),
+        ],
+      }))
+    );
+
+    onProgress?.({ phase: "generate", message: "Generating Word document…", percent: 90 });
+    const blob = await Packer.toBlob(new Document({ sections }));
+    onProgress?.({ phase: "done", message: "Exact-layout Word document ready", percent: 100 });
+    return blob;
+  } catch {
+    // Fall back to PDF.js rendering
+    return convertToImageDocxWithPdfJs(file, password, onProgress, scale);
   }
 }
 
-async function convertPdfToImageDocxWithPdfium(
+async function convertToImageDocxWithPdfJs(
   file: File,
   password?: string,
   onProgress?: (p: DocxProgress) => void,
   scale = 2
 ): Promise<Blob> {
-  onProgress?.({ phase: "extract", message: `Rendering PDF pages (${scale}× quality)…`, percent: 5 });
-  const renderedPages = await renderPdfWithPdfium(file, {
-    password,
-    scale,
-    imageType: "image/png",
-    onProgress: (page, totalPages) => onProgress?.({
-      phase: "extract",
-      message: `Rendering page ${page} of ${totalPages}…`,
-      percent: 5 + Math.round((page / totalPages) * 75),
-      page,
-      totalPages,
-    }),
-  });
-
-  const sections = await Promise.all(renderedPages.map(async (renderedPage) => ({
-    properties: {
-      page: {
-        size: {
-          width: Math.round(renderedPage.originalWidth * 20),
-          height: Math.round(renderedPage.originalHeight * 20),
-        },
-        margin: { top: 0, right: 0, bottom: 0, left: 0 },
-      },
-    },
-    children: [new Paragraph({
-      spacing: { before: 0, after: 0, line: 1 },
-      children: [new ImageRun({
-        type: "png",
-        data: new Uint8Array(await renderedPage.blob.arrayBuffer()),
-        transformation: {
-          width: Math.floor(renderedPage.originalWidth * 4 / 3) - 1,
-          height: Math.floor(renderedPage.originalHeight * 4 / 3) - 1,
-        },
-        altText: {
-          title: `PDF page ${renderedPage.page}`,
-          description: "Exact visual rendering of the original PDF page",
-          name: `Page ${renderedPage.page}`,
-        },
-      })],
-    })],
-  })));
-
-  onProgress?.({ phase: "generate", message: "Generating Word document…", percent: 90 });
-  const blob = await Packer.toBlob(new Document({ sections }));
-  onProgress?.({ phase: "done", message: "Exact-layout Word document ready", percent: 100 });
-  return blob;
-}
-
-async function convertPdfToImageDocxWithPdfJs(
-  file: File,
-  password?: string,
-  onProgress?: (p: DocxProgress) => void,
-  scale = 2
-): Promise<Blob> {
-  onProgress?.({ phase: "extract", message: "Rendering PDF pages (PDF.js fallback)…", percent: 5 });
-  const pdfjsLib = await loadPdfJsForLayout();
+  onProgress?.({ phase: "extract", message: "Rendering pages (PDF.js)…", percent: 5 });
+  const pdfjsLib = await loadPdfJs();
   const pdf = await pdfjsLib.getDocument({
     data: new Uint8Array(await file.arrayBuffer()),
     password: password || undefined,
@@ -225,25 +421,20 @@ async function convertPdfToImageDocxWithPdfJs(
     onProgress?.({
       phase: "extract",
       message: `Rendering page ${pageNumber} of ${pdf.numPages}…`,
-      percent: 5 + Math.round((pageNumber / pdf.numPages) * 75),
+      percent: 5 + Math.round((pageNumber / pdf.numPages) * 80),
       page: pageNumber,
       totalPages: pdf.numPages,
     });
+
     const page = await pdf.getPage(pageNumber);
     const pdfViewport = page.getViewport({ scale: 1 });
-    const renderViewport = page.getViewport({ scale });
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.ceil(renderViewport.width);
-    canvas.height = Math.ceil(renderViewport.height);
-    const context = canvas.getContext("2d");
-    if (!context) throw new Error("Canvas rendering is unavailable.");
-    await page.render({ canvasContext: context, viewport: renderViewport }).promise;
-    const png = await new Promise<Blob>((resolve, reject) => {
+    const canvas = await renderPdfJsPageToCanvas(page, scale);
+    const png = await new Promise<Blob>((resolve, reject) =>
       canvas.toBlob(
-        (blob) => (blob ? resolve(blob) : reject(new Error("Could not render PDF page."))),
+        (b) => (b ? resolve(b) : reject(new Error("Canvas render failed"))),
         "image/png"
-      );
-    });
+      )
+    );
 
     sections.push({
       properties: {
@@ -255,22 +446,26 @@ async function convertPdfToImageDocxWithPdfJs(
           margin: { top: 0, right: 0, bottom: 0, left: 0 },
         },
       },
-      children: [new Paragraph({
-        spacing: { before: 0, after: 0, line: 1 },
-        children: [new ImageRun({
-          type: "png",
-          data: new Uint8Array(await png.arrayBuffer()),
-          transformation: {
-            width: Math.floor(pdfViewport.width * 4 / 3) - 1,
-            height: Math.floor(pdfViewport.height * 4 / 3) - 1,
-          },
-          altText: {
-            title: `PDF page ${pageNumber}`,
-            description: "Exact visual rendering of the original PDF page",
-            name: `Page ${pageNumber}`,
-          },
-        })],
-      })],
+      children: [
+        new Paragraph({
+          spacing: { before: 0, after: 0, line: 1 },
+          children: [
+            new ImageRun({
+              type: "png",
+              data: new Uint8Array(await png.arrayBuffer()),
+              transformation: {
+                width: Math.floor(pdfViewport.width * 4 / 3) - 1,
+                height: Math.floor(pdfViewport.height * 4 / 3) - 1,
+              },
+              altText: {
+                title: `Page ${pageNumber}`,
+                description: "Exact visual rendering of the original PDF page",
+                name: `Page ${pageNumber}`,
+              },
+            }),
+          ],
+        }),
+      ],
     });
   }
 
@@ -280,28 +475,10 @@ async function convertPdfToImageDocxWithPdfJs(
   return blob;
 }
 
-function loadPdfJsForLayout(): Promise<any> {
-  return new Promise((resolve, reject) => {
-    if (typeof window !== "undefined" && (window as any).pdfjsLib) {
-      resolve((window as any).pdfjsLib);
-      return;
-    }
-    const script = document.createElement("script");
-    script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
-    script.onload = () => {
-      (window as any).pdfjsLib.GlobalWorkerOptions.workerSrc =
-        "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-      resolve((window as any).pdfjsLib);
-    };
-    script.onerror = () => reject(new Error("Failed to load PDF.js engine."));
-    document.head.appendChild(script);
-  });
-}
-
-// ── Structured block → DOCX element ─────────────────────────────────────────
+// ── Block → DOCX element ─────────────────────────────────────────────────────
 
 function blockToDocxElement(
-  block: PdfTextBlock,
+  block: import("./pdfTextExtractor").PdfTextBlock,
   medianFontSize: number
 ): Paragraph | Table | null {
   const text = block.lines
@@ -311,14 +488,12 @@ function blockToDocxElement(
 
   if (!text) return null;
 
-  // Table block: convert to a native Word table
   if (block.isTableRow) {
     return gridToDocxTable(block);
   }
 
-  // Heading detection using document-level median font size
   if (block.isHeading) {
-    const ratio = block.fontSize / medianFontSize;
+    const ratio = block.fontSize / Math.max(medianFontSize, 1);
     const level =
       ratio >= 2.0
         ? HeadingLevel.HEADING_1
@@ -329,14 +504,11 @@ function blockToDocxElement(
     return new Paragraph({
       heading: level,
       children: [new TextRun({ text, bold: true, font: "Calibri" })],
-      spacing: {
-        before: convertInchesToTwip(0.25),
-        after: convertInchesToTwip(0.1),
-      },
+      spacing: { before: convertInchesToTwip(0.25), after: convertInchesToTwip(0.1) },
     });
   }
 
-  // Regular paragraph — preserve inline bold/italic and font size from PDF
+  // Regular paragraph — preserve bold/italic/size/color from PDF
   const children: TextRun[] = [];
   for (const line of block.lines) {
     for (const item of line.items) {
@@ -346,11 +518,7 @@ function blockToDocxElement(
       const fontLower = item.fontName.toLowerCase();
       const isBold = fontLower.includes("bold") || block.isBold;
       const isItalic =
-        fontLower.includes("italic") ||
-        fontLower.includes("oblique") ||
-        block.isItalic;
-
-      // Clamp font size to reasonable Word range (half-points in docx)
+        fontLower.includes("italic") || fontLower.includes("oblique") || block.isItalic;
       const sizeHalfPts = Math.round(
         Math.max(10, Math.min(item.fontSize * 2, 72)) * 2
       );
@@ -377,9 +545,9 @@ function blockToDocxElement(
   });
 }
 
-// ── Table block → Word Table ─────────────────────────────────────────────────
+// ── Table block → Word table ─────────────────────────────────────────────────
 
-function gridToDocxTable(block: PdfTextBlock): Table {
+function gridToDocxTable(block: import("./pdfTextExtractor").PdfTextBlock): Table {
   const grid: string[][] = [];
 
   for (const line of block.lines) {
@@ -396,9 +564,9 @@ function gridToDocxTable(block: PdfTextBlock): Table {
       gaps.push(items[i].x - (items[i - 1].x + items[i - 1].width));
     }
 
-    // Use the median gap as the column separator threshold
-    const sortedGaps = [...gaps].filter((g) => g >= 0).sort((a, b) => a - b);
-    const medianGap = sortedGaps[Math.floor(sortedGaps.length / 2)] ?? 10;
+    const positiveGaps = gaps.filter((g) => g >= 0);
+    const sorted = [...positiveGaps].sort((a, b) => a - b);
+    const medianGap = sorted[Math.floor(sorted.length / 2)] ?? 10;
     const threshold = Math.max(medianGap * 0.6, 4);
 
     const cells: string[] = [items[0].str];
@@ -429,37 +597,33 @@ function gridToDocxTable(block: PdfTextBlock): Table {
     return row;
   });
 
-  // Detect header row: first row is bold or has a different font
   const hasHeader =
     normalizedGrid.length > 1 &&
     block.lines[0]?.items.some((i) => i.fontName.toLowerCase().includes("bold"));
 
-  const tableRows: TableRow[] = normalizedGrid.map((row, ri) => {
+  const tableRows = normalizedGrid.map((row, ri) => {
     const isHeader = hasHeader && ri === 0;
-    const isAlternate = !isHeader && ri % 2 === 0;
+    const isAlt = !isHeader && ri % 2 === 0;
 
     return new TableRow({
       tableHeader: isHeader,
       children: row.map((cellText) =>
         new TableCell({
-          children: [new Paragraph({
-            children: [new TextRun({
-              text: cellText,
-              bold: isHeader,
-              font: "Calibri",
-              size: 22, // 11pt
-            })],
-            spacing: { before: 40, after: 40 },
-          })],
+          children: [
+            new Paragraph({
+              children: [new TextRun({ text: cellText, bold: isHeader, font: "Calibri", size: 22 })],
+              spacing: { before: 40, after: 40 },
+            }),
+          ],
           borders: {
-            top: { style: BorderStyle.SINGLE, size: 4, color: "D0D0D0" },
+            top:    { style: BorderStyle.SINGLE, size: 4, color: "D0D0D0" },
             bottom: { style: BorderStyle.SINGLE, size: 4, color: "D0D0D0" },
-            left: { style: BorderStyle.SINGLE, size: 4, color: "D0D0D0" },
-            right: { style: BorderStyle.SINGLE, size: 4, color: "D0D0D0" },
+            left:   { style: BorderStyle.SINGLE, size: 4, color: "D0D0D0" },
+            right:  { style: BorderStyle.SINGLE, size: 4, color: "D0D0D0" },
           },
           shading: isHeader
             ? { fill: "E8EEF7", type: ShadingType.CLEAR }
-            : isAlternate
+            : isAlt
               ? { fill: "F7F7F7", type: ShadingType.CLEAR }
               : undefined,
           width: { size: Math.floor(100 / maxCols), type: WidthType.PERCENTAGE },
@@ -472,6 +636,25 @@ function gridToDocxTable(block: PdfTextBlock): Table {
   return new Table({
     rows: tableRows,
     width: { size: 100, type: WidthType.PERCENTAGE },
-    margins: { top: 0, bottom: 0, left: 0, right: 0 },
+  });
+}
+
+// ── PDF.js loader ────────────────────────────────────────────────────────────
+
+function loadPdfJs(): Promise<any> {
+  return new Promise((resolve, reject) => {
+    if (typeof window !== "undefined" && (window as any).pdfjsLib) {
+      resolve((window as any).pdfjsLib);
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+    script.onload = () => {
+      (window as any).pdfjsLib.GlobalWorkerOptions.workerSrc =
+        "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+      resolve((window as any).pdfjsLib);
+    };
+    script.onerror = () => reject(new Error("Failed to load PDF.js"));
+    document.head.appendChild(script);
   });
 }

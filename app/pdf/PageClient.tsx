@@ -320,6 +320,8 @@ export function PdfPageClient() {
   const [splitPages, setSplitPages] = useState("1");
   const [totalPages, setTotalPages] = useState(0);
   const [docFidelity, setDocFidelity] = useState<"layout" | "text" | "image">("layout");
+  const [ocrEnabled, setOcrEnabled] = useState(true);
+  const [ocrEngine, setOcrEngine] = useState<"local" | "cloud">("local");
 
   const [cloudEnhance, setCloudEnhance] = useState(false);
   // Engine selector for PDF → Excel. "tatr" = Microsoft Table Transformer (on-device DETR);
@@ -887,14 +889,17 @@ export function PdfPageClient() {
           setTatrProgressPct(100);
         } catch (serverErr) {
           console.warn("JOPDF server unavailable, using browser engine:", serverErr);
+          const ocrFallback = ocrEnabled
+            ? (ocrEngine === "cloud" && isUnlimited ? "cloud" : "local")
+            : "none";
           const modeLabel =
             docFidelity === "image"
               ? `exact-layout image (${imgScale}× quality)`
               : docFidelity === "text"
                 ? "plain text"
-                : "structured text";
+                : `structured text${ocrEnabled ? " + OCR" : ""}`;
           setTatrProgressLabel(`Browser engine: ${modeLabel}…`);
-          setTatrProgressPct(20);
+          setTatrProgressPct(15);
           blob = await convertPdfToDocx(
             file,
             docFidelity,
@@ -903,7 +908,7 @@ export function PdfPageClient() {
               setTatrProgressLabel(p.message);
               setTatrProgressPct(p.percent);
             },
-            { imageScale: imgScale } satisfies ConvertDocxOptions
+            { imageScale: imgScale, ocrFallback } satisfies ConvertDocxOptions
           );
         }
         const url = URL.createObjectURL(blob);
@@ -1354,26 +1359,21 @@ export function PdfPageClient() {
 
             {mode === "to-doc" && (
               <div className="space-y-3">
-                {/* Browser Fallback Quality Selector */}
+                {/* Output Mode */}
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
-                    <label className="text-[10px] uppercase font-bold text-slate-400">
-                      Browser Fallback Quality
-                    </label>
+                    <label className="text-[10px] uppercase font-bold text-slate-400">Output Mode</label>
                     {isUnlimited ? (
                       <span className="flex items-center gap-1 text-[9px] font-bold text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-900/30 px-2 py-0.5 rounded-full">
                         <Zap className="w-2.5 h-2.5" /> Pro — 3× Image Quality
                       </span>
                     ) : (
-                      <button
-                        onClick={openAuthModal}
-                        className="text-[9px] font-semibold text-indigo-500 hover:text-indigo-700 underline"
-                      >
+                      <button onClick={openAuthModal} className="text-[9px] font-semibold text-indigo-500 hover:text-indigo-700 underline">
                         Sign in for Pro 3× quality
                       </button>
                     )}
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     {(["layout", "image", "text"] as const).map((f) => {
                       const labels: Record<string, string> = {
                         layout: "Structured (Editable)",
@@ -1396,14 +1396,83 @@ export function PdfPageClient() {
                     })}
                   </div>
                   <p className="text-[10px] text-slate-400 leading-relaxed">
-                    {docFidelity === "layout" &&
-                      "Detects headings, paragraphs, bold/italic and tables. Best for editing the output."}
-                    {docFidelity === "image" &&
-                      `Renders each page as a ${isUnlimited ? "3×" : "2×"} resolution image — pixel-perfect but not editable.`}
-                    {docFidelity === "text" &&
-                      "Extracts raw text in reading order. Fastest option, no formatting preserved."}
+                    {docFidelity === "layout" && "Detects headings, paragraphs, bold/italic, and tables. Scanned pages are auto-OCR'd."}
+                    {docFidelity === "image" && `Renders each page as a ${isUnlimited ? "3×" : "2×"} resolution image — pixel-perfect but not editable.`}
+                    {docFidelity === "text" && "Extracts raw text in reading order. Fastest option, no formatting preserved."}
                   </p>
                 </div>
+
+                {/* OCR Settings — shown for layout & text modes */}
+                {docFidelity !== "image" && (
+                  <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-3 space-y-2 bg-slate-50/50 dark:bg-slate-900/30">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1">
+                        <Sparkles className="w-3 h-3" /> OCR for Scanned Pages
+                      </label>
+                      <label className="flex items-center gap-1.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={ocrEnabled}
+                          onChange={(e) => setOcrEnabled(e.target.checked)}
+                          className="rounded border-slate-300 text-indigo-600"
+                        />
+                        <span className="text-[10px] font-semibold text-slate-600 dark:text-slate-300">
+                          {ocrEnabled ? "Enabled" : "Disabled"}
+                        </span>
+                      </label>
+                    </div>
+
+                    {ocrEnabled && (
+                      <div className="space-y-2">
+                        <p className="text-[10px] text-slate-500 leading-relaxed">
+                          Pages with no embedded text are automatically detected and put through OCR to extract readable content.
+                        </p>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => setOcrEngine("local")}
+                            className={`flex-1 px-3 py-1.5 rounded-lg text-[10px] font-semibold transition-all ${
+                              ocrEngine === "local"
+                                ? "bg-indigo-600 text-white"
+                                : "bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300"
+                            }`}
+                          >
+                            Tesseract (On-Device)
+                          </button>
+                          {isUnlimited ? (
+                            <button
+                              onClick={() => setOcrEngine("cloud")}
+                              className={`flex-1 px-3 py-1.5 rounded-lg text-[10px] font-semibold transition-all ${
+                                ocrEngine === "cloud"
+                                  ? "bg-amber-500 text-white"
+                                  : "bg-white dark:bg-slate-800 border border-amber-300 dark:border-amber-600 text-amber-700 dark:text-amber-400"
+                              }`}
+                            >
+                              <Zap className="w-2.5 h-2.5 inline mr-0.5" />
+                              Nemotron Cloud (Pro)
+                            </button>
+                          ) : (
+                            <button
+                              onClick={openAuthModal}
+                              className="flex-1 px-3 py-1.5 rounded-lg text-[10px] font-semibold border border-dashed border-indigo-300 dark:border-indigo-600 text-indigo-500 dark:text-indigo-400"
+                            >
+                              Sign in for Cloud OCR
+                            </button>
+                          )}
+                        </div>
+                        {ocrEngine === "local" && (
+                          <p className="text-[10px] text-slate-400">
+                            Tesseract.js runs entirely in your browser. Private, no upload. Takes ~5–15s per scanned page.
+                          </p>
+                        )}
+                        {ocrEngine === "cloud" && isUnlimited && (
+                          <p className="text-[10px] text-amber-600 dark:text-amber-400">
+                            NVIDIA Nemotron OCR — far higher accuracy for complex layouts, handwriting, and non-Latin scripts. Page images sent to cloud.
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Progress indicator */}
                 {processing && tatrProgressPct > 0 && (
