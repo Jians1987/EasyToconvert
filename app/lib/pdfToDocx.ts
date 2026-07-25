@@ -1,15 +1,3 @@
-/**
- * pdfToDocx.ts
- * Rich PDF to Word converter with structured output.
- *
- * Features:
- * - Paragraph detection via vertical gap analysis
- * - Heading styles (H1, H2, H3) via font-size threshold
- * - Bold / italic preservation from font name hints
- * - Table blocks converted to native Word tables
- * - Progress callbacks for UI feedback
- */
-
 import {
   Document,
   Packer,
@@ -35,6 +23,9 @@ import {
 } from "./pdfTextExtractor";
 import { renderPdfWithPdfium } from "./pdfiumRenderer";
 
+// layout: structured editable output (paragraph detection, headings, bold/italic, tables)
+// image:  pixel-perfect image embed per page — exact visual, not editable
+// text:   plain text concatenation — simple and fast
 export type DocFidelity = "layout" | "text" | "image";
 
 export interface DocxProgress {
@@ -45,24 +36,29 @@ export interface DocxProgress {
   totalPages?: number;
 }
 
-/**
- * Convert a PDF file to a richly-formatted Word document.
- */
+export interface ConvertDocxOptions {
+  imageScale?: number; // render scale for image mode — 2 = standard, 3 = Pro quality
+}
+
 export async function convertPdfToDocx(
   file: File,
   fidelity: DocFidelity = "layout",
   password?: string,
-  onProgress?: (p: DocxProgress) => void
+  onProgress?: (p: DocxProgress) => void,
+  options?: ConvertDocxOptions
 ): Promise<Blob> {
-  if (fidelity === "layout" || fidelity === "image") {
-    return convertPdfToImageDocx(file, password, onProgress);
+  const scale = options?.imageScale ?? 2;
+
+  if (fidelity === "image") {
+    return convertPdfToImageDocx(file, password, onProgress, scale);
   }
-  // ── Phase 1: Extract text with full metadata ────────────────────────────
+
+  // ── Phase 1: Extract text ────────────────────────────────────────────────
   onProgress?.({ phase: "extract", message: "Extracting text from PDF…", percent: 5 });
   const { items: pageItems, numPages } = await extractPdfText(file, password);
   onProgress?.({ phase: "extract", message: `Extracted ${numPages} page(s)`, percent: 25 });
 
-  // ── Phase 2: Structure detection (paragraphs, headings, tables) ─────────
+  // ── Phase 2: Structure detection ─────────────────────────────────────────
   onProgress?.({ phase: "structure", message: "Analysing document structure…", percent: 30 });
 
   const allParagraphs: Array<Paragraph | Table> = [];
@@ -80,7 +76,6 @@ export async function convertPdfToDocx(
     if (pageItemList.length === 0) continue;
 
     if (fidelity === "text") {
-      // Plain text mode — just concatenate all text
       const text = pageItemList.map((i) => i.str).join(" ");
       if (text.trim()) {
         allParagraphs.push(
@@ -91,20 +86,27 @@ export async function convertPdfToDocx(
         );
       }
     } else {
-      // Layout mode — detect paragraphs, headings, tables
+      // layout: full structure detection — headings, paragraphs, tables, bold/italic
       const lines = groupIntoLines(pageItemList);
-      const blocks = groupIntoBlocks(lines);
+      const { blocks, medianFontSize } = groupIntoBlocks(lines);
 
       for (const block of blocks) {
-        const para = blockToParagraph(block);
-        if (para) allParagraphs.push(para);
+        const element = blockToDocxElement(block, medianFontSize);
+        if (element) allParagraphs.push(element);
+      }
+
+      // Page break between pages (except after the last page)
+      if (pageIdx < pageItems.length - 1) {
+        allParagraphs.push(
+          new Paragraph({ children: [], pageBreakBefore: true })
+        );
       }
     }
   }
 
-  onProgress?.({ phase: "structure", message: `Found ${allParagraphs.length} paragraph(s)`, percent: 60 });
+  onProgress?.({ phase: "structure", message: `Found ${allParagraphs.length} element(s)`, percent: 60 });
 
-  // ── Phase 3: Generate DOCX ──────────────────────────────────────────────
+  // ── Phase 3: Generate DOCX ───────────────────────────────────────────────
   onProgress?.({ phase: "generate", message: "Generating Word document…", percent: 65 });
 
   const doc = new Document({
@@ -127,37 +129,40 @@ export async function convertPdfToDocx(
 
   onProgress?.({ phase: "generate", message: "Packing document…", percent: 90 });
   const blob = await Packer.toBlob(doc);
-
   onProgress?.({ phase: "done", message: "Word document ready", percent: 100 });
   return blob;
 }
 
+// ── Image-based conversion (exact visual) ───────────────────────────────────
+
 async function convertPdfToImageDocx(
   file: File,
   password?: string,
-  onProgress?: (p: DocxProgress) => void
+  onProgress?: (p: DocxProgress) => void,
+  scale = 2
 ): Promise<Blob> {
   try {
-    return await convertPdfToImageDocxWithPdfium(file, password, onProgress);
+    return await convertPdfToImageDocxWithPdfium(file, password, onProgress, scale);
   } catch (error) {
     console.warn("PDFium exact-layout rendering failed; falling back to PDF.js.", error);
-    return convertPdfToImageDocxWithPdfJs(file, password, onProgress);
+    return convertPdfToImageDocxWithPdfJs(file, password, onProgress, scale);
   }
 }
 
 async function convertPdfToImageDocxWithPdfium(
   file: File,
   password?: string,
-  onProgress?: (p: DocxProgress) => void
+  onProgress?: (p: DocxProgress) => void,
+  scale = 2
 ): Promise<Blob> {
-  onProgress?.({ phase: "extract", message: "Rendering PDF pages with PDFium...", percent: 5 });
+  onProgress?.({ phase: "extract", message: `Rendering PDF pages (${scale}× quality)…`, percent: 5 });
   const renderedPages = await renderPdfWithPdfium(file, {
     password,
-    scale: 2,
+    scale,
     imageType: "image/png",
     onProgress: (page, totalPages) => onProgress?.({
       phase: "extract",
-      message: `PDFium rendering page ${page} of ${totalPages}...`,
+      message: `Rendering page ${page} of ${totalPages}…`,
       percent: 5 + Math.round((page / totalPages) * 75),
       page,
       totalPages,
@@ -167,7 +172,10 @@ async function convertPdfToImageDocxWithPdfium(
   const sections = await Promise.all(renderedPages.map(async (renderedPage) => ({
     properties: {
       page: {
-        size: { width: Math.round(renderedPage.originalWidth * 20), height: Math.round(renderedPage.originalHeight * 20) },
+        size: {
+          width: Math.round(renderedPage.originalWidth * 20),
+          height: Math.round(renderedPage.originalHeight * 20),
+        },
         margin: { top: 0, right: 0, bottom: 0, left: 0 },
       },
     },
@@ -180,12 +188,16 @@ async function convertPdfToImageDocxWithPdfium(
           width: Math.floor(renderedPage.originalWidth * 4 / 3) - 1,
           height: Math.floor(renderedPage.originalHeight * 4 / 3) - 1,
         },
-        altText: { title: `PDF page ${renderedPage.page}`, description: "Exact visual rendering of the original PDF page by PDFium", name: `Page ${renderedPage.page}` },
+        altText: {
+          title: `PDF page ${renderedPage.page}`,
+          description: "Exact visual rendering of the original PDF page",
+          name: `Page ${renderedPage.page}`,
+        },
       })],
     })],
   })));
 
-  onProgress?.({ phase: "generate", message: "Generating PDFium exact-layout Word document...", percent: 90 });
+  onProgress?.({ phase: "generate", message: "Generating Word document…", percent: 90 });
   const blob = await Packer.toBlob(new Document({ sections }));
   onProgress?.({ phase: "done", message: "Exact-layout Word document ready", percent: 100 });
   return blob;
@@ -194,9 +206,10 @@ async function convertPdfToImageDocxWithPdfium(
 async function convertPdfToImageDocxWithPdfJs(
   file: File,
   password?: string,
-  onProgress?: (p: DocxProgress) => void
+  onProgress?: (p: DocxProgress) => void,
+  scale = 2
 ): Promise<Blob> {
-  onProgress?.({ phase: "extract", message: "Rendering PDF pages with PDF.js fallback...", percent: 5 });
+  onProgress?.({ phase: "extract", message: "Rendering PDF pages (PDF.js fallback)…", percent: 5 });
   const pdfjsLib = await loadPdfJsForLayout();
   const pdf = await pdfjsLib.getDocument({
     data: new Uint8Array(await file.arrayBuffer()),
@@ -211,14 +224,14 @@ async function convertPdfToImageDocxWithPdfJs(
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
     onProgress?.({
       phase: "extract",
-      message: `PDF.js rendering page ${pageNumber} of ${pdf.numPages}...`,
+      message: `Rendering page ${pageNumber} of ${pdf.numPages}…`,
       percent: 5 + Math.round((pageNumber / pdf.numPages) * 75),
       page: pageNumber,
       totalPages: pdf.numPages,
     });
     const page = await pdf.getPage(pageNumber);
     const pdfViewport = page.getViewport({ scale: 1 });
-    const renderViewport = page.getViewport({ scale: 2 });
+    const renderViewport = page.getViewport({ scale });
     const canvas = document.createElement("canvas");
     canvas.width = Math.ceil(renderViewport.width);
     canvas.height = Math.ceil(renderViewport.height);
@@ -226,13 +239,19 @@ async function convertPdfToImageDocxWithPdfJs(
     if (!context) throw new Error("Canvas rendering is unavailable.");
     await page.render({ canvasContext: context, viewport: renderViewport }).promise;
     const png = await new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("Could not render PDF page.")), "image/png");
+      canvas.toBlob(
+        (blob) => (blob ? resolve(blob) : reject(new Error("Could not render PDF page."))),
+        "image/png"
+      );
     });
 
     sections.push({
       properties: {
         page: {
-          size: { width: Math.round(pdfViewport.width * 20), height: Math.round(pdfViewport.height * 20) },
+          size: {
+            width: Math.round(pdfViewport.width * 20),
+            height: Math.round(pdfViewport.height * 20),
+          },
           margin: { top: 0, right: 0, bottom: 0, left: 0 },
         },
       },
@@ -245,17 +264,22 @@ async function convertPdfToImageDocxWithPdfJs(
             width: Math.floor(pdfViewport.width * 4 / 3) - 1,
             height: Math.floor(pdfViewport.height * 4 / 3) - 1,
           },
-          altText: { title: `PDF page ${pageNumber}`, description: "Exact visual rendering of the original PDF page", name: `Page ${pageNumber}` },
+          altText: {
+            title: `PDF page ${pageNumber}`,
+            description: "Exact visual rendering of the original PDF page",
+            name: `Page ${pageNumber}`,
+          },
         })],
       })],
     });
   }
 
-  onProgress?.({ phase: "generate", message: "Generating exact-layout Word document...", percent: 90 });
+  onProgress?.({ phase: "generate", message: "Generating Word document…", percent: 90 });
   const blob = await Packer.toBlob(new Document({ sections }));
   onProgress?.({ phase: "done", message: "Exact-layout Word document ready", percent: 100 });
   return blob;
 }
+
 function loadPdfJsForLayout(): Promise<any> {
   return new Promise((resolve, reject) => {
     if (typeof window !== "undefined" && (window as any).pdfjsLib) {
@@ -273,10 +297,13 @@ function loadPdfJsForLayout(): Promise<any> {
     document.head.appendChild(script);
   });
 }
-/**
- * Convert a PdfTextBlock into a properly styled docx Paragraph or Table.
- */
-function blockToParagraph(block: PdfTextBlock): Paragraph | Table | null {
+
+// ── Structured block → DOCX element ─────────────────────────────────────────
+
+function blockToDocxElement(
+  block: PdfTextBlock,
+  medianFontSize: number
+): Paragraph | Table | null {
   const text = block.lines
     .flatMap((l) => l.items.map((i) => i.str))
     .join(" ")
@@ -284,44 +311,49 @@ function blockToParagraph(block: PdfTextBlock): Paragraph | Table | null {
 
   if (!text) return null;
 
-  // Table block → Word table
-  if (block.isTableRow && block.lines.length >= 2) {
+  // Table block: convert to a native Word table
+  if (block.isTableRow) {
     return gridToDocxTable(block);
   }
 
-  // Heading detection
+  // Heading detection using document-level median font size
   if (block.isHeading) {
+    const ratio = block.fontSize / medianFontSize;
     const level =
-      block.fontSize > block.lines[0]?.items[0]?.fontSize * 1.6
+      ratio >= 2.0
         ? HeadingLevel.HEADING_1
-        : block.fontSize > block.lines[0]?.items[0]?.fontSize * 1.3
+        : ratio >= 1.5
           ? HeadingLevel.HEADING_2
           : HeadingLevel.HEADING_3;
 
     return new Paragraph({
       heading: level,
-      children: [
-        new TextRun({
-          text,
-          bold: true,
-          font: "Calibri",
-        }),
-      ],
-      spacing: { before: convertInchesToTwip(0.2), after: convertInchesToTwip(0.1) },
+      children: [new TextRun({ text, bold: true, font: "Calibri" })],
+      spacing: {
+        before: convertInchesToTwip(0.25),
+        after: convertInchesToTwip(0.1),
+      },
     });
   }
 
-  // Regular paragraph — preserve inline bold/italic from font names
+  // Regular paragraph — preserve inline bold/italic and font size from PDF
   const children: TextRun[] = [];
   for (const line of block.lines) {
     for (const item of line.items) {
       const itemText = item.str.trim();
       if (!itemText) continue;
 
-      const fontNameLower = item.fontName.toLowerCase();
-      const isBold = fontNameLower.includes("bold") || block.isBold;
-      const isItalic = fontNameLower.includes("italic") || fontNameLower.includes("oblique") || block.isItalic;
-      const fontSizePt = Math.round(item.fontSize * 10) / 10;
+      const fontLower = item.fontName.toLowerCase();
+      const isBold = fontLower.includes("bold") || block.isBold;
+      const isItalic =
+        fontLower.includes("italic") ||
+        fontLower.includes("oblique") ||
+        block.isItalic;
+
+      // Clamp font size to reasonable Word range (half-points in docx)
+      const sizeHalfPts = Math.round(
+        Math.max(10, Math.min(item.fontSize * 2, 72)) * 2
+      );
 
       children.push(
         new TextRun({
@@ -329,7 +361,8 @@ function blockToParagraph(block: PdfTextBlock): Paragraph | Table | null {
           bold: isBold,
           italics: isItalic,
           font: "Calibri",
-          size: Math.max(10, Math.min(fontSizePt * 2, 72)) * 2, // half-points
+          size: sizeHalfPts,
+          color: item.color ?? undefined,
         })
       );
     }
@@ -344,109 +377,101 @@ function blockToParagraph(block: PdfTextBlock): Paragraph | Table | null {
   });
 }
 
-/**
- * Convert a table-detected block into a native Word Table.
- */
+// ── Table block → Word Table ─────────────────────────────────────────────────
+
 function gridToDocxTable(block: PdfTextBlock): Table {
-  // Build a grid from the block's lines
   const grid: string[][] = [];
 
   for (const line of block.lines) {
-    const cells: string[] = [];
-    // Cluster items in the line by horizontal gaps
     const items = [...line.items].sort((a, b) => a.x - b.x);
     if (items.length === 0) continue;
+
+    if (items.length === 1) {
+      grid.push([items[0].str]);
+      continue;
+    }
 
     const gaps: number[] = [];
     for (let i = 1; i < items.length; i++) {
       gaps.push(items[i].x - (items[i - 1].x + items[i - 1].width));
     }
 
-    if (gaps.length === 0) {
-      cells.push(items[0].str);
-    } else {
-      // Use median gap as column separator threshold
-      const sortedGaps = [...gaps].sort((a, b) => a - b);
-      const medianGap = sortedGaps[Math.floor(sortedGaps.length / 2)] || 12;
-      const threshold = medianGap * 0.8;
+    // Use the median gap as the column separator threshold
+    const sortedGaps = [...gaps].filter((g) => g >= 0).sort((a, b) => a - b);
+    const medianGap = sortedGaps[Math.floor(sortedGaps.length / 2)] ?? 10;
+    const threshold = Math.max(medianGap * 0.6, 4);
 
-      let currentCell = items[0].str;
-      for (let i = 1; i < items.length; i++) {
-        if (gaps[i - 1] > threshold) {
-          cells.push(currentCell);
-          currentCell = items[i].str;
-        } else {
-          currentCell += " " + items[i].str;
-        }
+    const cells: string[] = [items[0].str];
+    for (let i = 1; i < items.length; i++) {
+      if (gaps[i - 1] > threshold) {
+        cells.push(items[i].str);
+      } else {
+        cells[cells.length - 1] += " " + items[i].str;
       }
-      cells.push(currentCell);
     }
-
-    if (cells.length > 0) grid.push(cells);
+    grid.push(cells);
   }
 
   if (grid.length === 0) {
-    // Fallback: just return the text as a paragraph
-    const text = block.lines.flatMap((l) => l.items.map((i) => i.str)).join(" ");
+    const fallbackText = block.lines.flatMap((l) => l.items.map((i) => i.str)).join(" ");
     return new Table({
-      rows: [
-        new TableRow({
-          children: [
-            new TableCell({
-              children: [new Paragraph({ children: [new TextRun({ text, font: "Calibri" })] })],
-            }),
-          ],
-        }),
-      ],
+      rows: [new TableRow({
+        children: [new TableCell({
+          children: [new Paragraph({ children: [new TextRun({ text: fallbackText, font: "Calibri" })] })],
+        })],
+      })],
     });
   }
 
-  // Normalize column count
   const maxCols = Math.max(...grid.map((r) => r.length));
   const normalizedGrid = grid.map((row) => {
-    const padded = [...row];
-    while (padded.length < maxCols) padded.push("");
-    return padded;
+    while (row.length < maxCols) row.push("");
+    return row;
   });
 
-  // Detect header row (first row, often bold or different font)
-  const hasHeader = block.lines.length > 1 && block.lines[0].items.some((i) => i.fontName.toLowerCase().includes("bold"));
+  // Detect header row: first row is bold or has a different font
+  const hasHeader =
+    normalizedGrid.length > 1 &&
+    block.lines[0]?.items.some((i) => i.fontName.toLowerCase().includes("bold"));
 
   const tableRows: TableRow[] = normalizedGrid.map((row, ri) => {
-    const isHeaderRow = hasHeader && ri === 0;
+    const isHeader = hasHeader && ri === 0;
+    const isAlternate = !isHeader && ri % 2 === 0;
 
     return new TableRow({
-      children: row.map((cellText) => {
-        return new TableCell({
-          children: [
-            new Paragraph({
-              children: [
-                new TextRun({
-                  text: cellText,
-                  bold: isHeaderRow,
-                  font: "Calibri",
-                  size: 22, // 11pt
-                }),
-              ],
-            }),
-          ],
+      tableHeader: isHeader,
+      children: row.map((cellText) =>
+        new TableCell({
+          children: [new Paragraph({
+            children: [new TextRun({
+              text: cellText,
+              bold: isHeader,
+              font: "Calibri",
+              size: 22, // 11pt
+            })],
+            spacing: { before: 40, after: 40 },
+          })],
           borders: {
-            top: { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" },
-            bottom: { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" },
-            left: { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" },
-            right: { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" },
+            top: { style: BorderStyle.SINGLE, size: 4, color: "D0D0D0" },
+            bottom: { style: BorderStyle.SINGLE, size: 4, color: "D0D0D0" },
+            left: { style: BorderStyle.SINGLE, size: 4, color: "D0D0D0" },
+            right: { style: BorderStyle.SINGLE, size: 4, color: "D0D0D0" },
           },
-          shading: isHeaderRow
-            ? { fill: "F2F2F2", type: ShadingType.CLEAR }
-            : undefined,
-          width: { size: 100 / maxCols, type: WidthType.PERCENTAGE },
-        });
-      }),
+          shading: isHeader
+            ? { fill: "E8EEF7", type: ShadingType.CLEAR }
+            : isAlternate
+              ? { fill: "F7F7F7", type: ShadingType.CLEAR }
+              : undefined,
+          width: { size: Math.floor(100 / maxCols), type: WidthType.PERCENTAGE },
+          margins: { top: 40, bottom: 40, left: 80, right: 80 },
+        })
+      ),
     });
   });
 
   return new Table({
     rows: tableRows,
     width: { size: 100, type: WidthType.PERCENTAGE },
+    margins: { top: 0, bottom: 0, left: 0, right: 0 },
   });
 }

@@ -5,7 +5,7 @@ import ToolLayout from "@/components/ToolLayout";
 import Dropzone from "@/components/Dropzone";
 import { useConversions } from "@/app/providers";
 import { ocrImage, ocrImageWithNemotron } from "@/app/lib/ocr";
-import { convertPdfToDocx, type DocxProgress } from "@/app/lib/pdfToDocx";
+import { convertPdfToDocx, type DocxProgress, type ConvertDocxOptions } from "@/app/lib/pdfToDocx";
 import { convertPdfToXlsx, type XlsxProgress, type TableEngine } from "@/app/lib/pdfToXlsx";
 import { renderPdfWithPdfium } from "@/app/lib/pdfiumRenderer";
 import { extractTables, type PdfTextItem } from "@/app/lib/tableExtractor";
@@ -14,8 +14,9 @@ import { Document, Packer, Paragraph, TextRun, HeadingLevel, BorderStyle, ImageR
 import { 
   FileText, Star, AlertTriangle, Download, Image as ImageIcon, Type, FileSpreadsheet, Sparkles,
   Trash2, RotateCw, ArrowUp, ArrowDown, Plus, Square, Circle as CircleIcon, PenTool, Edit3,
-  Paintbrush, ChevronsUpDown, MousePointer, Check, ArrowRight, Upload, Signature
+  Paintbrush, ChevronsUpDown, MousePointer, Check, ArrowRight, Upload, Signature, Zap
 } from "lucide-react";
+import { useAuth } from "@/context/AuthContext";
 
 // Cloud-AI table extraction (opt-in). Uses the server-side proxy (/api/ai)
 // to securely call NVIDIA's Nemotron OCR v2 model — API key is never exposed client-side.
@@ -318,7 +319,7 @@ export function PdfPageClient() {
   const [rotatePages, setRotatePages] = useState("all");
   const [splitPages, setSplitPages] = useState("1");
   const [totalPages, setTotalPages] = useState(0);
-  const [docFidelity, setDocFidelity] = useState<"layout" | "text" | "image">("text");
+  const [docFidelity, setDocFidelity] = useState<"layout" | "text" | "image">("layout");
 
   const [cloudEnhance, setCloudEnhance] = useState(false);
   // Engine selector for PDF → Excel. "tatr" = Microsoft Table Transformer (on-device DETR);
@@ -387,6 +388,7 @@ export function PdfPageClient() {
   const addImgInputRef = useRef<HTMLInputElement | null>(null);
 
   const { addHistoryItem, favorites, toggleFavorite } = useConversions();
+  const { isUnlimited, openAuthModal } = useAuth();
 
   const handleFilesSelected = async (files: File[]) => {
     setSelectedFiles(files);
@@ -864,8 +866,10 @@ export function PdfPageClient() {
       } else if (mode === "to-doc") {
         const file = selectedFiles[0];
         let blob: Blob;
+        // Pro users get 3× render scale for image-based mode; free users get 2×
+        const imgScale = isUnlimited ? 3 : 2;
         try {
-          setTatrProgressLabel("Processing PDF to Word...");
+          setTatrProgressLabel("Processing with JOPDF server engine…");
           setTatrProgressPct(10);
           const formData = new FormData();
           formData.append("file", file);
@@ -882,17 +886,24 @@ export function PdfPageClient() {
           setTatrProgressLabel("Conversion complete");
           setTatrProgressPct(100);
         } catch (serverErr) {
-          console.warn("Server conversion unavailable, falling back to private browser engine:", serverErr);
-          setTatrProgressLabel("Using private browser conversion engine...");
+          console.warn("JOPDF server unavailable, using browser engine:", serverErr);
+          const modeLabel =
+            docFidelity === "image"
+              ? `exact-layout image (${imgScale}× quality)`
+              : docFidelity === "text"
+                ? "plain text"
+                : "structured text";
+          setTatrProgressLabel(`Browser engine: ${modeLabel}…`);
           setTatrProgressPct(20);
           blob = await convertPdfToDocx(
             file,
-            "layout",
+            docFidelity,
             inputPassword || undefined,
             (p) => {
               setTatrProgressLabel(p.message);
               setTatrProgressPct(p.percent);
-            }
+            },
+            { imageScale: imgScale } satisfies ConvertDocxOptions
           );
         }
         const url = URL.createObjectURL(blob);
@@ -1343,6 +1354,56 @@ export function PdfPageClient() {
 
             {mode === "to-doc" && (
               <div className="space-y-3">
+                {/* Browser Fallback Quality Selector */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] uppercase font-bold text-slate-400">
+                      Browser Fallback Quality
+                    </label>
+                    {isUnlimited ? (
+                      <span className="flex items-center gap-1 text-[9px] font-bold text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-900/30 px-2 py-0.5 rounded-full">
+                        <Zap className="w-2.5 h-2.5" /> Pro — 3× Image Quality
+                      </span>
+                    ) : (
+                      <button
+                        onClick={openAuthModal}
+                        className="text-[9px] font-semibold text-indigo-500 hover:text-indigo-700 underline"
+                      >
+                        Sign in for Pro 3× quality
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    {(["layout", "image", "text"] as const).map((f) => {
+                      const labels: Record<string, string> = {
+                        layout: "Structured (Editable)",
+                        image: "Exact Layout (Image)",
+                        text: "Plain Text",
+                      };
+                      return (
+                        <button
+                          key={f}
+                          onClick={() => setDocFidelity(f)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                            docFidelity === f
+                              ? "bg-indigo-600 text-white"
+                              : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200"
+                          }`}
+                        >
+                          {labels[f]}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[10px] text-slate-400 leading-relaxed">
+                    {docFidelity === "layout" &&
+                      "Detects headings, paragraphs, bold/italic and tables. Best for editing the output."}
+                    {docFidelity === "image" &&
+                      `Renders each page as a ${isUnlimited ? "3×" : "2×"} resolution image — pixel-perfect but not editable.`}
+                    {docFidelity === "text" &&
+                      "Extracts raw text in reading order. Fastest option, no formatting preserved."}
+                  </p>
+                </div>
 
                 {/* Progress indicator */}
                 {processing && tatrProgressPct > 0 && (
@@ -1380,21 +1441,36 @@ export function PdfPageClient() {
                     </button>
                   ))}
                 </div>
-                <label className="flex items-center space-x-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={cloudEnhance}
-                    onChange={(e) => setCloudEnhance(e.target.checked)}
-                    className="rounded border-slate-300"
-                  />
-                  <span className="text-[10px] text-slate-500">Enable Cloud AI (Nemotron OCR) for better accuracy</span>
-                </label>
-                {cloudEnhance && (
-                  <div className="p-3 rounded-xl border border-amber-500/30 bg-amber-50/50 dark:bg-amber-950/10">
-                    <p className="text-[11px] text-amber-700 dark:text-amber-400 leading-relaxed">
-                      Cloud AI table extraction sends page images to NVIDIA Nemotron OCR v2 for state-of-the-art table detection.
-                    </p>
-                  </div>
+                {isUnlimited ? (
+                  <>
+                    <label className="flex items-center space-x-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={cloudEnhance}
+                        onChange={(e) => setCloudEnhance(e.target.checked)}
+                        className="rounded border-slate-300"
+                      />
+                      <span className="flex items-center gap-1 text-[10px] text-slate-500">
+                        <Zap className="w-3 h-3 text-amber-500" />
+                        Cloud AI (Nemotron OCR) — Pro Feature
+                      </span>
+                    </label>
+                    {cloudEnhance && (
+                      <div className="p-3 rounded-xl border border-amber-500/30 bg-amber-50/50 dark:bg-amber-950/10">
+                        <p className="text-[11px] text-amber-700 dark:text-amber-400 leading-relaxed">
+                          Sends page images to NVIDIA Nemotron OCR v2 for state-of-the-art table detection.
+                        </p>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <button
+                    onClick={openAuthModal}
+                    className="flex items-center gap-1.5 text-[10px] text-indigo-500 hover:text-indigo-700 font-semibold"
+                  >
+                    <Zap className="w-3 h-3" />
+                    Sign in to unlock Cloud AI (Nemotron OCR) for better accuracy
+                  </button>
                 )}
                 {/* Progress indicator */}
                 {processing && tatrProgressPct > 0 && (

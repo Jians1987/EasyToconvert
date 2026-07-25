@@ -6,13 +6,14 @@
 
 export interface PdfTextItem {
   str: string;
-  x: number;        // PDF user-space units (bottom-left origin)
+  x: number;
   y: number;
   width: number;
   height: number;
   fontName: string;
   fontSize: number;
-  hasEOL: boolean;  // true if this item ends a line
+  hasEOL: boolean;
+  color?: string; // hex color string, e.g. "1F1F1F"
 }
 
 export interface PdfTextLine {
@@ -57,16 +58,35 @@ export async function extractPdfText(
 
     for (const item of content.items as any[]) {
       if (!item.str?.trim() && !item.hasEOL) continue;
-      const [, , , , tx, ty] = item.transform as number[];
+
+      const [a, , , d, tx, ty] = item.transform as number[];
+      // Use transform scale for accurate font size (more reliable than item.fontSize)
+      const scaleX = Math.abs(a);
+      const scaleY = Math.abs(d);
+      const effectiveFontSize = Math.max(scaleX, scaleY, item.fontSize ?? 10);
+
+      // Extract color if available (PDF.js provides it as an RGB array)
+      let color: string | undefined;
+      if (Array.isArray(item.color) && item.color.length === 3) {
+        const [r, g, b] = item.color as number[];
+        // Only store if not black (default)
+        if (r !== 0 || g !== 0 || b !== 0) {
+          color = [r, g, b]
+            .map((c) => Math.round(c * 255).toString(16).padStart(2, "0"))
+            .join("");
+        }
+      }
+
       pageItems.push({
         str: item.str ?? "",
         x: tx,
         y: ty,
         width: item.width ?? 0,
-        height: item.height ?? (item.fontSize ?? 10),
+        height: item.height ?? effectiveFontSize,
         fontName: (item.fontName ?? "").replace(/^g_d[0-9]+_/, ""),
-        fontSize: item.fontSize ?? 10,
+        fontSize: effectiveFontSize,
         hasEOL: !!item.hasEOL,
+        color,
       });
     }
 
@@ -78,24 +98,29 @@ export async function extractPdfText(
 
 /**
  * Group text items into lines (items on the same Y row).
+ * Uses adaptive Y tolerance based on median line height.
  */
 export function groupIntoLines(pageItems: PdfTextItem[]): PdfTextLine[] {
   if (pageItems.length === 0) return [];
 
-  // Sort top-to-bottom, then left-to-right
+  // Compute median item height for adaptive Y tolerance
+  const heights = pageItems.map((i) => i.height).sort((a, b) => a - b);
+  const medianHeight = heights[Math.floor(heights.length / 2)] || 10;
+  const yTol = Math.max(2, medianHeight * 0.4);
+
   const sorted = [...pageItems].sort((a, b) => {
     const yDiff = b.y - a.y;
-    if (Math.abs(yDiff) > 2) return yDiff;
+    if (Math.abs(yDiff) > yTol) return yDiff;
     return a.x - b.x;
   });
 
-  const yTol = 3;
   const lines: PdfTextLine[] = [];
-  let currentLine: PdfTextItem[] = [];
+  let currentLine: PdfTextItem[] = [sorted[0]];
   let currentY = sorted[0].y;
   let currentH = sorted[0].height;
 
-  for (const item of sorted) {
+  for (let i = 1; i < sorted.length; i++) {
+    const item = sorted[i];
     if (Math.abs(item.y - currentY) <= yTol) {
       currentLine.push(item);
       currentH = Math.max(currentH, item.height);
@@ -124,14 +149,17 @@ export function groupIntoLines(pageItems: PdfTextItem[]): PdfTextLine[] {
 
 /**
  * Group lines into blocks (paragraphs / sections).
- * Uses vertical gap detection to split blocks.
+ * Returns the blocks plus the document-level median font size
+ * needed for accurate heading level detection.
  */
-export function groupIntoBlocks(lines: PdfTextLine[]): PdfTextBlock[] {
-  if (lines.length === 0) return [];
+export function groupIntoBlocks(
+  lines: PdfTextLine[]
+): { blocks: PdfTextBlock[]; medianFontSize: number } {
+  if (lines.length === 0) return { blocks: [], medianFontSize: 12 };
 
-  // Compute median font size for heading detection
-  const allFontSizes = lines.flatMap(l => l.items.map(i => i.fontSize));
-  const medianFontSize = allFontSizes.sort((a, b) => a - b)[Math.floor(allFontSizes.length / 2)] || 12;
+  const allFontSizes = lines.flatMap((l) => l.items.map((i) => i.fontSize));
+  const sorted = [...allFontSizes].sort((a, b) => a - b);
+  const medianFontSize = sorted[Math.floor(sorted.length / 2)] || 12;
 
   const blocks: PdfTextBlock[] = [];
   let currentBlock: PdfTextLine[] = [];
@@ -140,9 +168,11 @@ export function groupIntoBlocks(lines: PdfTextLine[]): PdfTextBlock[] {
     const line = lines[i];
     const prevLine = lines[i - 1];
 
-    // Check if this line starts a new block
-    const gap = prevLine ? prevLine.y - (line.y + line.height) : 0;
-    const isNewBlock = prevLine && gap > line.height * 1.5;
+    // Gap between previous line's bottom and this line's top (PDF coords: y is bottom-left)
+    // prevLine.y is the baseline; line.y is this line's baseline
+    // A positive gap means whitespace between lines
+    const gap = prevLine ? prevLine.y - prevLine.height - line.y : 0;
+    const isNewBlock = prevLine && gap > line.height * 0.8;
 
     if (isNewBlock && currentBlock.length > 0) {
       blocks.push(createBlock(currentBlock, medianFontSize));
@@ -156,18 +186,23 @@ export function groupIntoBlocks(lines: PdfTextLine[]): PdfTextBlock[] {
     blocks.push(createBlock(currentBlock, medianFontSize));
   }
 
-  return blocks;
+  return { blocks, medianFontSize };
 }
 
 function createBlock(lines: PdfTextLine[], medianFontSize: number): PdfTextBlock {
-  const allItems = lines.flatMap(l => l.items);
-  const avgFontSize = allItems.reduce((s, i) => s + i.fontSize, 0) / allItems.length || medianFontSize;
+  const allItems = lines.flatMap((l) => l.items);
+  const avgFontSize =
+    allItems.reduce((s, i) => s + i.fontSize, 0) / (allItems.length || 1);
   const dominantFont = getDominantFont(allItems);
-  const isBold = dominantFont.toLowerCase().includes("bold");
-  const isItalic = dominantFont.toLowerCase().includes("italic") || dominantFont.toLowerCase().includes("oblique");
-  const isHeading = avgFontSize > medianFontSize * 1.3;
+  const fontLower = dominantFont.toLowerCase();
+  const isBold = fontLower.includes("bold");
+  const isItalic = fontLower.includes("italic") || fontLower.includes("oblique");
 
-  // Detect table rows: lines with evenly-spaced gaps between items
+  // A block is a heading if its average font size is meaningfully larger than the document median
+  const isHeading = avgFontSize > medianFontSize * 1.25 && isBold === false
+    ? allItems.some((i) => i.fontName.toLowerCase().includes("bold")) || avgFontSize > medianFontSize * 1.5
+    : avgFontSize > medianFontSize * 1.25;
+
   const isTableRow = detectTableRow(lines);
 
   const firstLine = lines[0];
@@ -176,7 +211,7 @@ function createBlock(lines: PdfTextLine[], medianFontSize: number): PdfTextBlock
   return {
     lines,
     y: firstLine.y,
-    height: firstLine.y + firstLine.height - lastLine.y,
+    height: firstLine.y - lastLine.y + lastLine.height,
     fontSize: avgFontSize,
     fontName: dominantFont,
     isBold,
@@ -195,18 +230,31 @@ function getDominantFont(items: PdfTextItem[]): string {
 }
 
 function detectTableRow(lines: PdfTextLine[]): boolean {
-  if (lines.length < 2) return false;
-  // Check if items are evenly spaced horizontally (table-like)
-  const firstLine = lines[0];
-  if (firstLine.items.length < 2) return false;
+  // Check the first line with the most items (best candidate for table detection)
+  const bestLine = [...lines].sort((a, b) => b.items.length - a.items.length)[0];
+  if (!bestLine || bestLine.items.length < 2) return false;
+
+  const items = [...bestLine.items].sort((a, b) => a.x - b.x);
+  if (items.length < 2) return false;
+
   const gaps: number[] = [];
-  for (let i = 1; i < firstLine.items.length; i++) {
-    gaps.push(firstLine.items[i].x - (firstLine.items[i - 1].x + firstLine.items[i - 1].width));
+  for (let i = 1; i < items.length; i++) {
+    const gap = items[i].x - (items[i - 1].x + items[i - 1].width);
+    if (gap >= 0) gaps.push(gap);
   }
-  if (gaps.length < 2) return false;
+
+  if (gaps.length < 1) return false;
+  if (gaps.length === 1) {
+    // Two-column layout: gap must be significant relative to item widths
+    const avgWidth = items.reduce((s, i) => s + i.width, 0) / items.length;
+    return gaps[0] > avgWidth * 0.5;
+  }
+
+  // Multiple columns: check gap evenness (low variance = table-like)
   const avgGap = gaps.reduce((s, g) => s + g, 0) / gaps.length;
+  if (avgGap <= 0) return false;
   const variance = gaps.reduce((s, g) => s + Math.abs(g - avgGap), 0) / gaps.length;
-  return variance < avgGap * 0.5; // evenly spaced = table-like
+  return variance < avgGap * 0.6;
 }
 
 // ─── Shared PDF.js loader ────────────────────────────────────────────────────
