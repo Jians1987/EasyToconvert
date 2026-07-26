@@ -54,8 +54,28 @@ export interface JopdfTaskOptions {
   jopdfOptions: string;
 }
 
+// Defense-in-depth: these strings are interpolated into a shell command, so
+// reject anything outside a conservative character set even though callers are
+// expected to pass fixed literals. A file extension is alphanumeric; a mode is
+// alphanumeric; the options string is a set of `key=value;` pairs.
+const SAFE_EXT = /^[a-z0-9]{1,8}$/i;
+const SAFE_MODE = /^[a-z0-9]{1,32}$/i;
+const SAFE_OPTIONS = /^[a-z0-9=;.\- ]{0,128}$/i;
+
+function assertSafe(value: string, pattern: RegExp, label: string): void {
+  if (!pattern.test(value)) {
+    throw new Error(`Invalid JOPDF ${label}.`);
+  }
+}
+
 export async function runJopdfTask(options: JopdfTaskOptions): Promise<Buffer> {
   const { file, inputExt, outputExt, jopdfMode, jopdfOptions } = options;
+
+  assertSafe(inputExt, SAFE_EXT, "input extension");
+  assertSafe(outputExt, SAFE_EXT, "output extension");
+  assertSafe(jopdfMode, SAFE_MODE, "mode");
+  assertSafe(jopdfOptions, SAFE_OPTIONS, "options");
+
   const { javaExe, classpath, secret } = resolveJopdfEnvironment();
 
   const tmpDir = os.tmpdir();

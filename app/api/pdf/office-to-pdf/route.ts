@@ -6,19 +6,15 @@ export const maxDuration = 60;
 
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
 
-function getJOPDFMode(mode: string): string {
-  if (mode === "word-to-pdf") return "word2pdf";
-  if (mode === "excel-to-pdf") return "excel2pdf";
-  if (mode === "ppt-to-pdf") return "ppt2pdf";
-  return "word2pdf";
-}
-
-function getJOPDFOptionsString(mode: string): string {
-  if (mode === "word-to-pdf") return "format=docx;";
-  if (mode === "excel-to-pdf") return "format=excel;";
-  if (mode === "ppt-to-pdf") return "format=pptx;";
-  return "format=docx;";
-}
+// Allowlist of conversion modes → fixed JOPDF mode, options, and the input
+// extension to hand the runner. The input extension is chosen from this table
+// rather than derived from the uploaded filename, so no user-controlled string
+// can flow into the temp file path the runner constructs.
+const MODE_CONFIG: Record<string, { mode: string; options: string; inputExt: string }> = {
+  "word-to-pdf": { mode: "word2pdf", options: "format=docx;", inputExt: "docx" },
+  "excel-to-pdf": { mode: "excel2pdf", options: "format=excel;", inputExt: "xlsx" },
+  "ppt-to-pdf": { mode: "ppt2pdf", options: "format=pptx;", inputExt: "pptx" },
+};
 
 export async function POST(request: Request) {
   try {
@@ -34,16 +30,20 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "File must be 50MB or smaller." }, { status: 413 });
     }
 
-    const ext = file.name.split(".").pop() || "docx";
-    const jopdfMode = getJOPDFMode(mode);
-    const jopdfOptions = getJOPDFOptionsString(mode);
+    const config = MODE_CONFIG[mode];
+    if (!config) {
+      return NextResponse.json(
+        { error: `Unsupported conversion mode. Allowed: ${Object.keys(MODE_CONFIG).join(", ")}.` },
+        { status: 400 }
+      );
+    }
 
     const outputBuffer = await runJopdfTask({
       file,
-      inputExt: ext,
+      inputExt: config.inputExt,
       outputExt: "pdf",
-      jopdfMode,
-      jopdfOptions,
+      jopdfMode: config.mode,
+      jopdfOptions: config.options,
     });
 
     const outputFileName = `${file.name.replace(/\.[^/.]+$/, "")}.pdf`;

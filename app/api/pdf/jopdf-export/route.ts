@@ -6,18 +6,19 @@ export const maxDuration = 60;
 
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
 
-function getJOPDFMode(format: string): string {
-  if (format === "docx" || format === "doc") return "pdf2word";
-  if (format === "xlsx" || format === "xls") return "pdf2office";
-  if (format === "pptx" || format === "ppt") return "pdf2ppt";
-  if (format === "jpg" || format === "png") return "pdf2image";
-  return "pdf2word";
-}
-
-function getJOPDFOptionsString(format: string): string {
-  if (format === "xlsx" || format === "xls") return "format=excel;";
-  return `format=${format};`;
-}
+// Allowlist of accepted output formats → their JOPDF mode and options string.
+// Both values are fixed literals here so no user input is ever interpolated
+// into the shell command built by the runner.
+const FORMAT_CONFIG: Record<string, { mode: string; options: string }> = {
+  docx: { mode: "pdf2word", options: "format=docx;" },
+  doc: { mode: "pdf2word", options: "format=doc;" },
+  xlsx: { mode: "pdf2office", options: "format=excel;" },
+  xls: { mode: "pdf2office", options: "format=excel;" },
+  pptx: { mode: "pdf2ppt", options: "format=pptx;" },
+  ppt: { mode: "pdf2ppt", options: "format=ppt;" },
+  jpg: { mode: "pdf2image", options: "format=jpg;" },
+  png: { mode: "pdf2image", options: "format=png;" },
+};
 
 export async function POST(request: Request) {
   try {
@@ -33,8 +34,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "File must be 50MB or smaller." }, { status: 413 });
     }
 
-    const jopdfMode = getJOPDFMode(format);
-    const jopdfOptions = getJOPDFOptionsString(format);
+    const config = FORMAT_CONFIG[format];
+    if (!config) {
+      return NextResponse.json(
+        { error: `Unsupported output format. Allowed: ${Object.keys(FORMAT_CONFIG).join(", ")}.` },
+        { status: 400 }
+      );
+    }
+    const { mode: jopdfMode, options: jopdfOptions } = config;
 
     const outputBuffer = await runJopdfTask({
       file,
