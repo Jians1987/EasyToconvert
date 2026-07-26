@@ -868,55 +868,73 @@ export function PdfPageClient() {
       } else if (mode === "to-doc") {
         const file = selectedFiles[0];
         let blob: Blob;
-        // Pro users get 3× render scale for image-based mode; free users get 2×
         const imgScale = isUnlimited ? 3 : 2;
+
+        // ── Tier 1: JOPDF server (Java — fast, handles most PDFs well) ──────
+        let tier1Failed = false;
         try {
-          setTatrProgressLabel("Processing with JOPDF server engine…");
-          setTatrProgressPct(10);
-          const formData = new FormData();
-          formData.append("file", file);
-          formData.append("format", "docx");
-          const res = await fetch("/api/pdf/jopdf-export", {
-            method: "POST",
-            body: formData,
-          });
+          setTatrProgressLabel("Engine 1/3: JOPDF server…");
+          setTatrProgressPct(5);
+          const fd = new FormData();
+          fd.append("file", file);
+          fd.append("format", "docx");
+          const res = await fetch("/api/pdf/jopdf-export", { method: "POST", body: fd });
           if (!res.ok) {
-            const errBody = await res.json().catch(() => ({}));
-            throw new Error(errBody.error || "Server engine unavailable.");
+            const e = await res.json().catch(() => ({}));
+            throw new Error(e.error || "JOPDF unavailable");
           }
           blob = await res.blob();
-          setTatrProgressLabel("Conversion complete");
+          setTatrProgressLabel("Conversion complete (JOPDF)");
           setTatrProgressPct(100);
-        } catch (serverErr) {
-          console.warn("JOPDF server unavailable, using browser engine:", serverErr);
-          const ocrFallback = ocrEnabled
-            ? (ocrEngine === "cloud" && isUnlimited ? "cloud" : "local")
-            : "none";
-          const modeLabel =
-            docFidelity === "image"
-              ? `exact-layout image (${imgScale}× quality)`
-              : docFidelity === "text"
-                ? "plain text"
-                : `structured text${ocrEnabled ? " + OCR" : ""}`;
-          setTatrProgressLabel(`Browser engine: ${modeLabel}…`);
-          setTatrProgressPct(15);
-          blob = await convertPdfToDocx(
-            file,
-            docFidelity,
-            inputPassword || undefined,
-            (p) => {
-              setTatrProgressLabel(p.message);
-              setTatrProgressPct(p.percent);
-            },
-            { imageScale: imgScale, ocrFallback } satisfies ConvertDocxOptions
-          );
+        } catch (jopdfErr) {
+          tier1Failed = true;
+          console.warn("JOPDF failed:", jopdfErr);
+
+          // ── Tier 2: Adobe PDF Services (cloud, best quality + built-in OCR) ─
+          let tier2Failed = false;
+          try {
+            setTatrProgressLabel("Engine 2/3: Adobe PDF Services (cloud)…");
+            setTatrProgressPct(10);
+            blob = await convertPdfToDocxWithAdobe(file, inputPassword || undefined);
+            setTatrProgressLabel("Conversion complete (Adobe PDF Services)");
+            setTatrProgressPct(100);
+          } catch (adobeErr) {
+            tier2Failed = true;
+            console.warn("Adobe PDF Services failed:", adobeErr);
+
+            // ── Tier 3: Browser engine (always works, with OCR for scanned pages)
+            const ocrFallback = ocrEnabled
+              ? (ocrEngine === "cloud" && isUnlimited ? "cloud" : "local")
+              : "none";
+            const modeLabel =
+              docFidelity === "image"
+                ? `exact-layout image (${imgScale}× quality)`
+                : docFidelity === "text"
+                  ? "plain text"
+                  : `structured text${ocrEnabled ? " + OCR" : ""}`;
+            setTatrProgressLabel(`Engine 3/3: Browser (${modeLabel})…`);
+            setTatrProgressPct(15);
+            blob = await convertPdfToDocx(
+              file,
+              docFidelity,
+              inputPassword || undefined,
+              (p) => {
+                setTatrProgressLabel(p.message);
+                setTatrProgressPct(p.percent);
+              },
+              { imageScale: imgScale, ocrFallback } satisfies ConvertDocxOptions
+            );
+            void tier2Failed; // used only for flow clarity
+          }
+          void tier1Failed;
         }
-        const url = URL.createObjectURL(blob);
+
+        const url = URL.createObjectURL(blob!);
         setDownloadUrl(url);
 
         addHistoryItem({
           fileName: `${file.name.split(".")[0] || "document"}.docx`,
-          fileSize: blob.size,
+          fileSize: blob!.size,
           toolType: "pdf-to-doc",
           status: "success",
           downloadUrl: url,
@@ -924,22 +942,52 @@ export function PdfPageClient() {
 
       } else if (mode === "to-excel") {
         const file = selectedFiles[0];
-        const { blob, sheetCount, totalTables } = await convertPdfToXlsx(
-          file,
-          tableEngine,
-          inputPassword || undefined,
-          cloudEnhance,
-          (p) => {
-            setTatrProgressLabel(p.message);
-            setTatrProgressPct(p.percent);
+        let blob: Blob;
+        let sheetCount = 1;
+        let totalTables = 0;
+
+        // ── Tier 1: JOPDF server (pdf2office — preserves table structure) ────
+        try {
+          setTatrProgressLabel("Engine 1/2: JOPDF server (Excel)…");
+          setTatrProgressPct(5);
+          const fd = new FormData();
+          fd.append("file", file);
+          fd.append("format", "xlsx");
+          const res = await fetch("/api/pdf/jopdf-export", { method: "POST", body: fd });
+          if (!res.ok) {
+            const e = await res.json().catch(() => ({}));
+            throw new Error(e.error || "JOPDF Excel unavailable");
           }
-        );
-        const url = URL.createObjectURL(blob);
+          blob = await res.blob();
+          setTatrProgressLabel("Conversion complete (JOPDF)");
+          setTatrProgressPct(100);
+        } catch (serverErr) {
+          console.warn("JOPDF Excel failed, using browser engine:", serverErr);
+
+          // ── Tier 2: Browser (TATR table detection + smart clustering) ────────
+          setTatrProgressLabel("Engine 2/2: Browser table extraction…");
+          setTatrProgressPct(10);
+          const result = await convertPdfToXlsx(
+            file,
+            tableEngine,
+            inputPassword || undefined,
+            cloudEnhance,
+            (p) => {
+              setTatrProgressLabel(p.message);
+              setTatrProgressPct(p.percent);
+            }
+          );
+          blob = result.blob;
+          sheetCount = result.sheetCount;
+          totalTables = result.totalTables;
+        }
+
+        const url = URL.createObjectURL(blob!);
         setDownloadUrl(url);
 
         addHistoryItem({
           fileName: `${file.name.split(".")[0] || "tables"}.xlsx`,
-          fileSize: blob.size,
+          fileSize: blob!.size,
           toolType: "pdf-to-excel",
           status: "success",
           downloadUrl: url,

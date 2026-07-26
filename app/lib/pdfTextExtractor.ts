@@ -195,13 +195,24 @@ function createBlock(lines: PdfTextLine[], medianFontSize: number): PdfTextBlock
     allItems.reduce((s, i) => s + i.fontSize, 0) / (allItems.length || 1);
   const dominantFont = getDominantFont(allItems);
   const fontLower = dominantFont.toLowerCase();
-  const isBold = fontLower.includes("bold");
+  const isBold = fontLower.includes("bold") || allItems.some(i => i.fontName.toLowerCase().includes("bold"));
   const isItalic = fontLower.includes("italic") || fontLower.includes("oblique");
 
-  // A block is a heading if its average font size is meaningfully larger than the document median
-  const isHeading = avgFontSize > medianFontSize * 1.25 && isBold === false
-    ? allItems.some((i) => i.fontName.toLowerCase().includes("bold")) || avgFontSize > medianFontSize * 1.5
-    : avgFontSize > medianFontSize * 1.25;
+  const allText = allItems.map((i) => i.str).join("").trim();
+  const wordCount = allText.split(/\s+/).filter(Boolean).length;
+  const isAllCaps =
+    allText.length > 2 &&
+    allText === allText.toUpperCase() &&
+    /[A-Z]/.test(allText) &&
+    !/^\d/.test(allText);
+
+  const isHeading =
+    // Large font — clear heading
+    avgFontSize > medianFontSize * 1.3 ||
+    // Moderately larger + bold + single line
+    (avgFontSize > medianFontSize * 1.1 && isBold && lines.length === 1) ||
+    // ALL-CAPS short text at any size (section headers, labels)
+    (isAllCaps && wordCount >= 1 && wordCount <= 12 && lines.length <= 2);
 
   const isTableRow = detectTableRow(lines);
 
@@ -219,6 +230,39 @@ function createBlock(lines: PdfTextLine[], medianFontSize: number): PdfTextBlock
     isHeading,
     isTableRow,
   };
+}
+
+/**
+ * Detect multi-column layouts.
+ * Returns an array of item groups — one per detected column (left→right order).
+ * Single-column PDFs return [items].
+ */
+export function detectColumns(items: PdfTextItem[]): PdfTextItem[][] {
+  if (items.length < 8) return [items];
+
+  const xs = items.map((i) => i.x + i.width * 0.5);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const pageWidth = maxX - minX;
+  if (pageWidth < 100) return [items];
+
+  // Count how many item centres fall in the middle 40% of the page width.
+  // A genuine two-column PDF has very little text in this central gap.
+  const gapStart = minX + pageWidth * 0.3;
+  const gapEnd   = minX + pageWidth * 0.7;
+  const inGap = items.filter((i) => {
+    const cx = i.x + i.width * 0.5;
+    return cx > gapStart && cx < gapEnd;
+  });
+
+  if (inGap.length < items.length * 0.08) {
+    const mid = minX + pageWidth * 0.5;
+    const left  = items.filter((i) => i.x + i.width * 0.5 <= mid);
+    const right = items.filter((i) => i.x + i.width * 0.5 >  mid);
+    if (left.length > 3 && right.length > 3) return [left, right];
+  }
+
+  return [items];
 }
 
 function getDominantFont(items: PdfTextItem[]): string {

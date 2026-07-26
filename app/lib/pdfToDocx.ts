@@ -17,6 +17,7 @@ import {
 import {
   groupIntoLines,
   groupIntoBlocks,
+  detectColumns,
   type PdfTextItem,
 } from "./pdfTextExtractor";
 
@@ -185,9 +186,14 @@ export async function convertPdfToDocx(
 
 // ── Scanned-page helpers ─────────────────────────────────────────────────────
 
-/** True when a page has no meaningful embedded text (likely scanned). */
+/** True when a page has no meaningful embedded text (likely scanned or image-only). */
 function looksScanned(text: string): boolean {
-  return text.replace(/\s/g, "").length < 15;
+  const nonSpace = text.replace(/\s/g, "").length;
+  // Absolute minimum — definitely empty
+  if (nonSpace < 15) return true;
+  // Has chars but only digits / punctuation (page numbers, footers) — no real content
+  if (nonSpace < 60 && !/[a-zA-Z]{3,}/.test(text)) return true;
+  return false;
 }
 
 /** Render a single PDF.js page to a canvas at the given scale (for OCR). */
@@ -223,48 +229,81 @@ function rawTextToParagraphs(text: string, _pageNum?: number): Paragraph[] {
 
 /**
  * Convert Tesseract result data into Word paragraphs.
- * Uses paragraph-level data for confidence filtering and structure.
+ * Prefers block → paragraph hierarchy for best structure.
+ * Applies confidence filtering and heuristic heading detection.
  */
 function tesseractDataToParagraphs(data: any): Paragraph[] {
-  const paras: Paragraph[] = [];
+  // Build a flat list of Tesseract paragraph objects from blocks (preferred)
+  // or fall back directly to data.paragraphs
+  let rawParas: any[] = [];
 
-  // Use Tesseract's paragraph array when available
-  if (Array.isArray(data.paragraphs) && data.paragraphs.length > 0) {
-    for (const para of data.paragraphs) {
-      if (!para.text?.trim()) continue;
-      if ((para.confidence ?? 100) < 20) continue; // skip near-garbage
-
-      const text = para.text.replace(/\n/g, " ").trim();
-      if (text.length < 2) continue;
-
-      // Rough heading heuristic: short, high-confidence paragraph
-      const wordCount = text.split(/\s+/).length;
-      const isLikelyHeading = wordCount <= 8 && (para.confidence ?? 0) > 70;
-
-      if (isLikelyHeading && wordCount <= 5) {
-        paras.push(
-          new Paragraph({
-            heading: HeadingLevel.HEADING_2,
-            children: [new TextRun({ text, bold: true, font: "Calibri" })],
-            spacing: { before: convertInchesToTwip(0.2), after: convertInchesToTwip(0.05) },
-          })
-        );
-      } else {
-        paras.push(
-          new Paragraph({
-            children: [new TextRun({ text, font: "Calibri", size: 24 })],
-            spacing: { after: convertInchesToTwip(0.1) },
-            alignment: AlignmentType.JUSTIFIED,
-          })
-        );
-      }
+  if (Array.isArray(data.blocks) && data.blocks.length > 0) {
+    for (const block of data.blocks) {
+      // Skip TABLE blocks — they come out garbled as plain text
+      if (block.blocktype === "TABLE" || block.blocktype === "VERT_TEXT") continue;
+      if (Array.isArray(block.paragraphs)) rawParas.push(...block.paragraphs);
     }
-  } else {
-    // Fallback: parse raw text
-    return rawTextToParagraphs(data.text ?? "");
   }
 
-  return paras;
+  if (rawParas.length === 0 && Array.isArray(data.paragraphs)) {
+    rawParas = data.paragraphs;
+  }
+
+  if (rawParas.length === 0) return rawTextToParagraphs(data.text ?? "");
+
+  const paras: Paragraph[] = [];
+
+  for (const para of rawParas) {
+    if (!para.text?.trim()) continue;
+    if ((para.confidence ?? 100) < 20) continue; // near-garbage
+
+    const text = para.text.replace(/[\r\n]+/g, " ").trim();
+    if (text.length < 2) continue;
+
+    const words = text.split(/\s+/).filter(Boolean);
+    const wordCount = words.length;
+    const confidence = para.confidence ?? 80;
+
+    // Heading signals:
+    const isAllCaps =
+      text === text.toUpperCase() && /[A-Z]/.test(text) && !/^\d/.test(text);
+    const isShortHighConf = wordCount <= 5 && confidence > 65;
+    const isMedShortHighConf = wordCount <= 8 && confidence > 75;
+
+    if ((isAllCaps && wordCount <= 10) || (isShortHighConf && wordCount <= 3)) {
+      paras.push(
+        new Paragraph({
+          heading: HeadingLevel.HEADING_2,
+          children: [new TextRun({ text, bold: true, font: "Calibri" })],
+          spacing: {
+            before: convertInchesToTwip(0.22),
+            after: convertInchesToTwip(0.06),
+          },
+        })
+      );
+    } else if (isShortHighConf || isMedShortHighConf) {
+      paras.push(
+        new Paragraph({
+          heading: HeadingLevel.HEADING_3,
+          children: [new TextRun({ text, bold: true, font: "Calibri", size: 24 })],
+          spacing: {
+            before: convertInchesToTwip(0.15),
+            after: convertInchesToTwip(0.05),
+          },
+        })
+      );
+    } else {
+      paras.push(
+        new Paragraph({
+          children: [new TextRun({ text, font: "Calibri", size: 24 })],
+          spacing: { after: convertInchesToTwip(0.1) },
+          alignment: AlignmentType.JUSTIFIED,
+        })
+      );
+    }
+  }
+
+  return paras.length > 0 ? paras : rawTextToParagraphs(data.text ?? "");
 }
 
 // ── Embedded-text helpers ────────────────────────────────────────────────────
@@ -318,12 +357,17 @@ function buildPlainTextParagraphs(textItems: PdfTextItem[]): Paragraph[] {
 
 function buildStructuredElements(textItems: PdfTextItem[]): Array<Paragraph | Table> {
   if (textItems.length === 0) return [];
-  const lines = groupIntoLines(textItems);
-  const { blocks, medianFontSize } = groupIntoBlocks(lines);
+  // Detect multi-column layout and process each column independently
+  // so that two-column PDFs don't produce interleaved text
+  const columns = detectColumns(textItems);
   const elements: Array<Paragraph | Table> = [];
-  for (const block of blocks) {
-    const el = blockToDocxElement(block, medianFontSize);
-    if (el) elements.push(el);
+  for (const colItems of columns) {
+    const lines = groupIntoLines(colItems);
+    const { blocks, medianFontSize } = groupIntoBlocks(lines);
+    for (const block of blocks) {
+      const el = blockToDocxElement(block, medianFontSize);
+      if (el) elements.push(el);
+    }
   }
   return elements;
 }
