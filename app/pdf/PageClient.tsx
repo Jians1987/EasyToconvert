@@ -6,6 +6,7 @@ import Dropzone from "@/components/Dropzone";
 import { useConversions } from "@/app/providers";
 import { ocrImage, ocrImageWithNemotron } from "@/app/lib/ocr";
 import { convertPdfToDocx, type DocxProgress, type ConvertDocxOptions } from "@/app/lib/pdfToDocx";
+import { extractPdfText } from "@/app/lib/pdfTextExtractor";
 import { convertPdfToXlsx, type XlsxProgress, type TableEngine } from "@/app/lib/pdfToXlsx";
 import { renderPdfWithPdfium } from "@/app/lib/pdfiumRenderer";
 import { extractTables, type PdfTextItem } from "@/app/lib/tableExtractor";
@@ -867,66 +868,102 @@ export function PdfPageClient() {
 
       } else if (mode === "to-doc") {
         const file = selectedFiles[0];
-        let blob: Blob;
+        let blob: Blob | undefined;
         const imgScale = isUnlimited ? 3 : 2;
+        const ocrFallback = ocrEnabled
+          ? (ocrEngine === "cloud" && isUnlimited ? "cloud" : "local")
+          : "none";
 
-        // ── Tier 1: JOPDF server (Java — fast, handles most PDFs well) ──────
-        let tier1Failed = false;
-        try {
-          setTatrProgressLabel("Engine 1/3: JOPDF server…");
-          setTatrProgressPct(5);
-          const fd = new FormData();
-          fd.append("file", file);
-          fd.append("format", "docx");
-          const res = await fetch("/api/pdf/jopdf-export", { method: "POST", body: fd });
-          if (!res.ok) {
-            const e = await res.json().catch(() => ({}));
-            throw new Error(e.error || "JOPDF unavailable");
-          }
-          blob = await res.blob();
-          setTatrProgressLabel("Conversion complete (JOPDF)");
-          setTatrProgressPct(100);
-        } catch (jopdfErr) {
-          tier1Failed = true;
-          console.warn("JOPDF failed:", jopdfErr);
+        // Browser engine runner (structured/text/image + OCR for scanned pages)
+        const runBrowserEngine = async (label: string) => {
+          setTatrProgressLabel(label);
+          setTatrProgressPct(15);
+          return convertPdfToDocx(
+            file,
+            docFidelity,
+            inputPassword || undefined,
+            (p) => {
+              setTatrProgressLabel(p.message);
+              setTatrProgressPct(p.percent);
+            },
+            { imageScale: imgScale, ocrFallback } satisfies ConvertDocxOptions
+          );
+        };
 
-          // ── Tier 2: Adobe PDF Services (cloud, best quality + built-in OCR) ─
-          let tier2Failed = false;
+        // ── Pre-scan: does this PDF actually contain embedded text? ──────────
+        // JOPDF/Aspose reports success on scanned PDFs but produces an empty,
+        // image-only Word file (no OCR). We detect scanned PDFs up front and
+        // route them to OCR-capable engines instead of letting JOPDF swallow
+        // them silently.
+        let isScannedPdf = false;
+        if (docFidelity !== "image") {
           try {
-            setTatrProgressLabel("Engine 2/3: Adobe PDF Services (cloud)…");
+            setTatrProgressLabel("Analysing document…");
+            setTatrProgressPct(4);
+            const { items, numPages } = await extractPdfText(file, inputPassword || undefined);
+            const totalNonSpace = items.reduce(
+              (sum, page) => sum + page.reduce((t, i) => t + i.str.replace(/\s/g, "").length, 0),
+              0
+            );
+            // Fewer than ~40 non-space characters per page → effectively a scan
+            isScannedPdf = totalNonSpace < Math.max(40 * numPages, 40);
+          } catch (scanErr) {
+            console.warn("Pre-scan failed, assuming digital PDF:", scanErr);
+          }
+        }
+
+        if (docFidelity === "image") {
+          // Exact-layout image mode — only the browser engine produces true
+          // image output; JOPDF would override it with text extraction.
+          blob = await runBrowserEngine(`Rendering exact-layout image (${imgScale}× quality)…`);
+
+        } else if (isScannedPdf && ocrEnabled) {
+          // ── Scanned PDF + OCR on: skip JOPDF (no OCR). Adobe has built-in OCR;
+          //    browser engine (Tesseract/Nemotron) is the always-available fallback.
+          try {
+            setTatrProgressLabel("Scanned PDF detected · Engine 1/2: Adobe OCR (cloud)…");
             setTatrProgressPct(10);
             blob = await convertPdfToDocxWithAdobe(file, inputPassword || undefined);
-            setTatrProgressLabel("Conversion complete (Adobe PDF Services)");
+            setTatrProgressLabel("Conversion complete (Adobe OCR)");
             setTatrProgressPct(100);
           } catch (adobeErr) {
-            tier2Failed = true;
-            console.warn("Adobe PDF Services failed:", adobeErr);
-
-            // ── Tier 3: Browser engine (always works, with OCR for scanned pages)
-            const ocrFallback = ocrEnabled
-              ? (ocrEngine === "cloud" && isUnlimited ? "cloud" : "local")
-              : "none";
-            const modeLabel =
-              docFidelity === "image"
-                ? `exact-layout image (${imgScale}× quality)`
-                : docFidelity === "text"
-                  ? "plain text"
-                  : `structured text${ocrEnabled ? " + OCR" : ""}`;
-            setTatrProgressLabel(`Engine 3/3: Browser (${modeLabel})…`);
-            setTatrProgressPct(15);
-            blob = await convertPdfToDocx(
-              file,
-              docFidelity,
-              inputPassword || undefined,
-              (p) => {
-                setTatrProgressLabel(p.message);
-                setTatrProgressPct(p.percent);
-              },
-              { imageScale: imgScale, ocrFallback } satisfies ConvertDocxOptions
-            );
-            void tier2Failed; // used only for flow clarity
+            console.warn("Adobe OCR unavailable, using browser OCR:", adobeErr);
+            const engineName = ocrFallback === "cloud" ? "Nemotron Cloud OCR" : "Tesseract OCR";
+            blob = await runBrowserEngine(`Scanned PDF · Engine 2/2: Browser (${engineName})…`);
           }
-          void tier1Failed;
+
+        } else {
+          // ── Digital text PDF: JOPDF (Aspose) → Adobe → browser. ─────────────
+          try {
+            setTatrProgressLabel("Engine 1/3: JOPDF server…");
+            setTatrProgressPct(5);
+            const fd = new FormData();
+            fd.append("file", file);
+            fd.append("format", "docx");
+            const res = await fetch("/api/pdf/jopdf-export", { method: "POST", body: fd });
+            if (!res.ok) {
+              const e = await res.json().catch(() => ({}));
+              throw new Error(e.error || "JOPDF unavailable");
+            }
+            blob = await res.blob();
+            setTatrProgressLabel("Conversion complete (JOPDF)");
+            setTatrProgressPct(100);
+          } catch (jopdfErr) {
+            console.warn("JOPDF failed:", jopdfErr);
+            try {
+              setTatrProgressLabel("Engine 2/3: Adobe PDF Services (cloud)…");
+              setTatrProgressPct(10);
+              blob = await convertPdfToDocxWithAdobe(file, inputPassword || undefined);
+              setTatrProgressLabel("Conversion complete (Adobe PDF Services)");
+              setTatrProgressPct(100);
+            } catch (adobeErr) {
+              console.warn("Adobe PDF Services failed:", adobeErr);
+              const modeLabel = docFidelity === "text"
+                ? "plain text"
+                : `structured text${ocrEnabled ? " + OCR" : ""}`;
+              blob = await runBrowserEngine(`Engine 3/3: Browser (${modeLabel})…`);
+            }
+          }
         }
 
         const url = URL.createObjectURL(blob!);
