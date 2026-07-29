@@ -1,4 +1,61 @@
 import { NextResponse } from "next/server";
+import http from "node:http";
+import https from "node:https";
+
+function postJsonNative(
+  urlStr: string,
+  payload: object,
+  extraHeaders: Record<string, string> = {},
+  timeoutMs = 180_000
+): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const url = new URL(urlStr);
+    const postData = JSON.stringify(payload);
+    const isHttps = url.protocol === "https:";
+    const client = isHttps ? https : http;
+
+    const req = client.request(
+      {
+        hostname: url.hostname,
+        port: url.port || (isHttps ? 443 : 80),
+        path: url.pathname + url.search,
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(postData),
+          Connection: "close",
+          ...extraHeaders,
+        },
+        timeout: timeoutMs,
+      },
+      (res) => {
+        let data = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk) => (data += chunk));
+        res.on("end", () => {
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            try {
+              resolve(JSON.parse(data));
+            } catch (e) {
+              reject(new Error(`Invalid JSON response: ${data.slice(0, 200)}`));
+            }
+          } else {
+            reject(new Error(`Unlimited-OCR Server Error (${res.statusCode}): ${data.slice(0, 300)}`));
+          }
+        });
+      }
+    );
+
+    req.on("error", (err) => reject(err));
+    req.on("timeout", () => {
+      req.destroy();
+      reject(new Error(`Unlimited-OCR request timed out after ${Math.round(timeoutMs / 1000)} seconds`));
+    });
+
+    req.write(postData);
+    req.end();
+  });
+}
 
 const MAX_IMAGE_BASE64_LENGTH = 35_000_000;
 const MAX_PROMPT_LENGTH = 50_000;
@@ -76,56 +133,33 @@ export async function POST(req: Request) {
       const apiKey = process.env.UNLIMITED_OCR_API_KEY || "";
 
       try {
-        const headers: Record<string, string> = {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        };
+        const headers: Record<string, string> = {};
         if (apiKey) {
           headers["Authorization"] = `Bearer ${apiKey}`;
         }
 
-        let res: Response | null = null;
-        let lastErr: unknown = null;
-        for (let attempt = 1; attempt <= 2; attempt++) {
-          try {
-            res = await fetch(`${serverUrl}/v1/chat/completions`, {
-              method: "POST",
-              headers,
-              signal: AbortSignal.timeout(120_000),
-              body: JSON.stringify({
-                model: "Unlimited-OCR",
-                messages: [
-                  {
-                    role: "user",
-                    content: [
-                      { type: "text", text: "<image>document parsing." },
-                      { type: "image_url", image_url: { url: `data:image/png;base64,${imageBase64}` } },
-                    ],
-                  },
+        const data = await postJsonNative(
+          `${serverUrl}/v1/chat/completions`,
+          {
+            model: "Unlimited-OCR",
+            messages: [
+              {
+                role: "user",
+                content: [
+                  { type: "text", text: "<image>document parsing." },
+                  { type: "image_url", image_url: { url: `data:image/png;base64,${imageBase64}` } },
                 ],
-                temperature: 0,
-                skip_special_tokens: false,
-                stream: false,
-                images_config: { image_mode: "gundam" },
-              }),
-            });
-            if (res) break;
-          } catch (e) {
-            lastErr = e;
-            if (attempt < 2) await new Promise((r) => setTimeout(r, 500));
-          }
-        }
-        if (!res) throw lastErr;
+              },
+            ],
+            temperature: 0,
+            skip_special_tokens: false,
+            stream: false,
+            images_config: { image_mode: "gundam" },
+          },
+          headers,
+          180_000
+        );
 
-        if (!res.ok) {
-          const errText = await res.text();
-          return NextResponse.json(
-            { error: `Unlimited-OCR Server Error (${res.status}): ${errText}` },
-            { status: 502 }
-          );
-        }
-
-        const data = await res.json();
         const text = data.choices?.[0]?.message?.content ?? "";
         return NextResponse.json({ text: String(text).trim() });
       } catch (err: unknown) {
