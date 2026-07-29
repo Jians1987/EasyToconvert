@@ -101,3 +101,44 @@ export async function ocrImageWithNemotron(
     confidence: 99, // Cloud API doesn't return confidence, assume high
   };
 }
+
+/**
+ * Recognize text using Baidu Unlimited-OCR model.
+ * State-of-the-art multi-page & structural document parsing model (Markdown, LaTeX, Tables).
+ */
+export async function ocrImageWithUnlimitedOcr(
+  image: OcrImage,
+  onProgress?: (percent: number) => void
+): Promise<OcrResult> {
+  if (onProgress) onProgress(10);
+
+  const b64 = await imageToBase64(image);
+  if (onProgress) onProgress(30);
+
+  if (onProgress) onProgress(60);
+  const res = await fetch("/api/ai", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      action: "unlimited-ocr",
+      imageBase64: b64,
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    console.error("Unlimited OCR proxy failed:", errText);
+    throw new Error(`Unlimited OCR API Error: ${res.status}`);
+  }
+
+  const data = await res.json();
+  if (onProgress) onProgress(100);
+
+  return {
+    text: data.text || "",
+    confidence: 99,
+  };
+}
+

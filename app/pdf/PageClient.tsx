@@ -322,7 +322,7 @@ export function PdfPageClient() {
   const [totalPages, setTotalPages] = useState(0);
   const [docFidelity, setDocFidelity] = useState<"layout" | "text" | "image">("layout");
   const [ocrEnabled, setOcrEnabled] = useState(true);
-  const [ocrEngine, setOcrEngine] = useState<"local" | "cloud">("local");
+  const [ocrEngine, setOcrEngine] = useState<"local" | "cloud" | "unlimited">("local");
 
   const [cloudEnhance, setCloudEnhance] = useState(false);
   // Engine selector for PDF → Excel. "tatr" = Microsoft Table Transformer (on-device DETR);
@@ -871,7 +871,7 @@ export function PdfPageClient() {
         let blob: Blob | undefined;
         const imgScale = isUnlimited ? 3 : 2;
         const ocrFallback = ocrEnabled
-          ? (ocrEngine === "cloud" && isUnlimited ? "cloud" : "local")
+          ? (ocrEngine === "unlimited" ? "unlimited" : (ocrEngine === "cloud" && isUnlimited ? "cloud" : "local"))
           : "none";
 
         // Browser engine runner (structured/text/image + OCR for scanned pages)
@@ -1512,7 +1512,7 @@ export function PdfPageClient() {
                         <p className="text-[10px] text-slate-500 leading-relaxed">
                           Pages with no embedded text are automatically detected and put through OCR to extract readable content.
                         </p>
-                        <div className="flex gap-2">
+                        <div className="flex flex-wrap gap-2">
                           <button
                             onClick={() => setOcrEngine("local")}
                             className={`flex-1 px-3 py-1.5 rounded-lg text-[10px] font-semibold transition-all ${
@@ -1543,6 +1543,17 @@ export function PdfPageClient() {
                               Sign in for Cloud OCR
                             </button>
                           )}
+                          <button
+                            onClick={() => setOcrEngine("unlimited")}
+                            className={`flex-1 px-3 py-1.5 rounded-lg text-[10px] font-semibold transition-all ${
+                              ocrEngine === "unlimited"
+                                ? "bg-emerald-600 text-white"
+                                : "bg-white dark:bg-slate-800 border border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-400"
+                            }`}
+                          >
+                            <Sparkles className="w-2.5 h-2.5 inline mr-0.5" />
+                            Unlimited OCR (Baidu)
+                          </button>
                         </div>
                         {ocrEngine === "local" && (
                           <p className="text-[10px] text-slate-400">
@@ -1552,6 +1563,11 @@ export function PdfPageClient() {
                         {ocrEngine === "cloud" && isUnlimited && (
                           <p className="text-[10px] text-amber-600 dark:text-amber-400">
                             NVIDIA Nemotron OCR — far higher accuracy for complex layouts, handwriting, and non-Latin scripts. Page images sent to cloud.
+                          </p>
+                        )}
+                        {ocrEngine === "unlimited" && (
+                          <p className="text-[10px] text-emerald-600 dark:text-emerald-400">
+                            Baidu Unlimited-OCR — State-of-the-art visual document model for structural Markdown, LaTeX formulas, and table parsing.
                           </p>
                         )}
                       </div>

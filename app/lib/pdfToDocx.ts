@@ -37,7 +37,7 @@ export interface DocxProgress {
 
 export interface ConvertDocxOptions {
   imageScale?: number;         // render scale for image mode — 2=standard, 3=Pro quality
-  ocrFallback?: "none" | "local" | "cloud"; // "local"=Tesseract.js, "cloud"=Nemotron
+  ocrFallback?: "none" | "local" | "cloud" | "unlimited"; // "local"=Tesseract.js, "cloud"=Nemotron, "unlimited"=Baidu Unlimited OCR
 }
 
 // ── Public API ───────────────────────────────────────────────────────────────
@@ -104,7 +104,18 @@ export async function convertPdfToDocx(
 
       const canvas = await renderPdfJsPageToCanvas(page, 3.0);
 
-      if (ocrFallback === "cloud") {
+      if (ocrFallback === "unlimited") {
+        onProgress?.({
+          phase: "extract",
+          message: `Page ${pageNum}: Baidu Unlimited OCR…`,
+          percent: basePercent + 1,
+          page: pageNum,
+          totalPages: numPages,
+        });
+        const { ocrImageWithUnlimitedOcr } = await import("./ocr");
+        const result = await ocrImageWithUnlimitedOcr(canvas);
+        allElements.push(...rawTextToParagraphs(result.text, pageNum));
+      } else if (ocrFallback === "cloud") {
         onProgress?.({
           phase: "extract",
           message: `Page ${pageNum}: Cloud OCR (Nemotron)…`,

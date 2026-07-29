@@ -64,6 +64,69 @@ export async function POST(req: Request) {
       return NextResponse.json({ text: String(text).trim() });
     }
 
+    if (action === "unlimited-ocr") {
+      if (typeof imageBase64 !== "string" || !imageBase64) {
+        return NextResponse.json({ error: "Missing imageBase64" }, { status: 400 });
+      }
+      if (imageBase64.length > MAX_IMAGE_BASE64_LENGTH) {
+        return NextResponse.json({ error: "Image is too large" }, { status: 413 });
+      }
+
+      const serverUrl = process.env.UNLIMITED_OCR_SERVER_URL || "http://127.0.0.1:10000";
+      const apiKey = process.env.UNLIMITED_OCR_API_KEY || "";
+
+      try {
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        };
+        if (apiKey) {
+          headers["Authorization"] = `Bearer ${apiKey}`;
+        }
+
+        const res = await fetch(`${serverUrl}/v1/chat/completions`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            model: "Unlimited-OCR",
+            messages: [
+              {
+                role: "user",
+                content: [
+                  { type: "text", text: "<image>document parsing." },
+                  { type: "image_url", image_url: { url: `data:image/png;base64,${imageBase64}` } },
+                ],
+              },
+            ],
+            temperature: 0,
+            skip_special_tokens: false,
+            stream: false,
+            images_config: { image_mode: "gundam" },
+          }),
+        });
+
+        if (!res.ok) {
+          const errText = await res.text();
+          return NextResponse.json(
+            { error: `Unlimited-OCR Server Error (${res.status}): ${errText}` },
+            { status: 502 }
+          );
+        }
+
+        const data = await res.json();
+        const text = data.choices?.[0]?.message?.content ?? "";
+        return NextResponse.json({ text: String(text).trim() });
+      } catch (err: unknown) {
+        console.error("Unlimited-OCR endpoint unreachable:", err);
+        return NextResponse.json(
+          {
+            error: `Unlimited-OCR server unreachable at ${serverUrl}. Ensure SGLang or vLLM inference server is running.`,
+          },
+          { status: 503 }
+        );
+      }
+    }
+
     if (action === "deepseek-chat") {
       if (typeof prompt !== "string" || !prompt) {
         return NextResponse.json({ error: "Missing prompt" }, { status: 400 });
