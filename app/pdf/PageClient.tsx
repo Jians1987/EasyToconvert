@@ -1463,7 +1463,7 @@ export function PdfPageClient() {
                             If you encounter error 503, run the local server command:
                           </p>
                           <code className="block text-[10px] font-mono bg-white/80 dark:bg-slate-900/80 p-1.5 rounded border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 select-all">
-                            python infer.py --model_dir baidu/Unlimited-OCR --gpu 0
+                            python server.py
                           </code>
                         </div>
                       </div>

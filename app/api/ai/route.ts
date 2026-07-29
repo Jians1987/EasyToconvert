@@ -120,7 +120,7 @@ export async function POST(req: Request) {
         console.error("Unlimited-OCR endpoint unreachable:", err);
         return NextResponse.json(
           {
-            error: `Unlimited-OCR server is not running at ${serverUrl}. Please start the model server: python infer.py --model_dir baidu/Unlimited-OCR --gpu 0`,
+            error: `Unlimited-OCR server is not running at ${serverUrl}. Please run: python server.py in Desktop\\UnlimitedOCR`,
           },
           { status: 503 }
         );
