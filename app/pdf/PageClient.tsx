@@ -19,46 +19,6 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 
-// Cloud-AI table extraction (opt-in). Uses the server-side proxy (/api/ai)
-// to securely call NVIDIA's Nemotron OCR v2 model — API key is never exposed client-side.
-const extractTableWithNemotron = async (pngBase64: string): Promise<string[][]> => {
-  const res = await fetch("/api/ai", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      action: "nemotron-ocr",
-      imageBase64: pngBase64
-    })
-  });
-
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Nemotron OCR Proxy ${res.status}: ${errText.slice(0, 200)}`);
-  }
-
-  const data = await res.json();
-
-  // Nemotron-parse usually returns markdown table structures
-  let markdown = data.text || "";
-
-  // Parse markdown tables into a 2D grid
-  const lines = markdown.split('\n');
-  let grid: string[][] = [];
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
-      const cells = trimmed.split('|').slice(1, -1).map((c: string) => c.trim());
-      // Skip markdown separator lines like |---|---|
-      if (cells.every((c: string) => c.replace(/-/g, '').trim() === '')) continue;
-      grid.push(cells);
-    }
-  }
-
-  return grid;
-};
-
 type PdfMode = "merge" | "split" | "rotate" | "to-doc" | "to-excel" | "to-image" | "edit" | "protect" | "compress" | "image-to-pdf" | "word-to-pdf" | "excel-to-pdf" | "ppt-to-pdf";
 
 
@@ -324,10 +284,10 @@ export function PdfPageClient() {
   const [ocrEnabled, setOcrEnabled] = useState(true);
   const [ocrEngine, setOcrEngine] = useState<"unlimited">("unlimited");
 
-  const [cloudEnhance, setCloudEnhance] = useState(false);
   // Engine selector for PDF → Excel. "tatr" = Microsoft Table Transformer (on-device DETR);
   // "cluster" = legacy X/Y text-position clustering.
   const [tableEngine, setTableEngine] = useState<"tatr" | "cluster">("tatr");
+  const [cloudEnhance, setCloudEnhance] = useState(false);
   const [tatrProgressLabel, setTatrProgressLabel] = useState("");
   const [tatrProgressPct, setTatrProgressPct] = useState(0);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
@@ -461,7 +421,7 @@ export function PdfPageClient() {
     split: "Extract specific pages into a separate PDF file.",
     rotate: "Rotate all pages or a specific set of pages by 90°, 180°, or 270°.",
     "to-doc": "Convert a PDF into a Word Document (.docx). Adobe High Quality creates the best editable output; Private Browser remains available as a local fallback.",
-    "to-excel": "Extract tables from a PDF into an Excel Spreadsheet (.xlsx). Uses Microsoft Table Transformer (on-device) or Nemotron Cloud AI.",
+    "to-excel": "Extract tables from a PDF into an Excel Spreadsheet (.xlsx). Uses Microsoft Table Transformer (on-device) or Kimi Vision Cloud AI.",
     "to-image": "Render each page of a PDF as a high-quality JPG image you can save individually.",
     edit: "Draw, annotate, add text, stamps, signatures, images, and shapes directly on PDF pages. Reorder, rotate, delete, and export.",
     protect: "Encrypt your PDF with a password. Apply advanced permissions to restrict printing, copying, and modifications.",
@@ -1504,13 +1464,13 @@ export function PdfPageClient() {
                       />
                       <span className="flex items-center gap-1 text-[10px] text-slate-500">
                         <Zap className="w-3 h-3 text-amber-500" />
-                        Cloud AI (Nemotron OCR) — Pro Feature
+                        Cloud AI (Kimi Vision OCR) — Pro Feature
                       </span>
                     </label>
                     {cloudEnhance && (
                       <div className="p-3 rounded-xl border border-amber-500/30 bg-amber-50/50 dark:bg-amber-950/10">
                         <p className="text-[11px] text-amber-700 dark:text-amber-400 leading-relaxed">
-                          Sends page images to NVIDIA Nemotron OCR v2 for state-of-the-art table detection.
+                          Sends page images to Kimi K3 (Moonshot AI) for state-of-the-art table detection.
                         </p>
                       </div>
                     )}
@@ -1521,7 +1481,7 @@ export function PdfPageClient() {
                     className="flex items-center gap-1.5 text-[10px] text-indigo-500 hover:text-indigo-700 font-semibold"
                   >
                     <Zap className="w-3 h-3" />
-                    Sign in to unlock Cloud AI (Nemotron OCR) for better accuracy
+                    Sign in to unlock Cloud AI (Kimi Vision OCR) for better accuracy
                   </button>
                 )}
                 {/* Progress indicator */}

@@ -146,47 +146,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Missing action" }, { status: 400 });
     }
 
-    if (action === "nemotron-ocr") {
-      if (typeof imageBase64 !== "string" || !imageBase64) {
-        return NextResponse.json({ error: "Missing imageBase64" }, { status: 400 });
-      }
-      if (imageBase64.length > MAX_IMAGE_BASE64_LENGTH) {
-        return NextResponse.json({ error: "Image is too large" }, { status: 413 });
-      }
-
-      const apiKey = process.env.NVIDIA_NEMOTRON_API_KEY;
-      if (!apiKey) {
-        return NextResponse.json({ error: "Cloud OCR is not configured" }, { status: 503 });
-      }
-
-      const res = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-          Accept: "application/json",
-        },
-        body: JSON.stringify({
-          model: "nvidia/nemotron-parse",
-          messages: [{ role: "user", content: [{ type: "image_url", image_url: { url: `data:image/png;base64,${imageBase64}` } }] }],
-        }),
-      });
-
-      if (!res.ok) {
-        return NextResponse.json({ error: `Cloud OCR request failed (${res.status})` }, { status: 502 });
-      }
-
-      const data = await res.json();
-      let text = data.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments
-        ?? data.choices?.[0]?.message?.content
-        ?? "";
-      try {
-        const parsed = JSON.parse(text);
-        if (typeof parsed === "string") text = parsed;
-      } catch {}
-      return NextResponse.json({ text: String(text).trim() });
-    }
-
     if (action === "unlimited-ocr") {
       if (typeof imageBase64 !== "string" || !imageBase64) {
         return NextResponse.json({ error: "Missing imageBase64" }, { status: 400 });
@@ -269,6 +228,74 @@ export async function POST(req: Request) {
       } catch {
         return NextResponse.json({ online: false, status: 503, serverUrl });
       }
+    }
+
+    if (action === "vision-ocr") {
+      if (typeof imageBase64 !== "string" || !imageBase64) {
+        return NextResponse.json({ error: "Missing imageBase64" }, { status: 400 });
+      }
+      if (imageBase64.length > MAX_IMAGE_BASE64_LENGTH) {
+        return NextResponse.json({ error: "Image is too large" }, { status: 413 });
+      }
+
+      const apiKey = process.env.KIMI_API_KEY;
+      if (!apiKey) {
+        return NextResponse.json({ error: "Cloud OCR is not configured" }, { status: 503 });
+      }
+      const base = (process.env.KIMI_BASE_URL || "https://api.kimi.com/coding/v1").replace(/\/+$/, "");
+      const model = process.env.KIMI_VISION_MODEL || "k3";
+
+      let res: Response;
+      try {
+        res = await fetch(`${base}/chat/completions`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+            Accept: "application/json",
+          },
+          body: JSON.stringify({
+            model,
+            messages: [
+              {
+                role: "user",
+                content: [
+                  {
+                    type: "text",
+                    text: "Extract every table on this page as GitHub-flavored markdown tables. Preserve all rows and columns exactly as shown. Output only the markdown tables — no commentary, no code fences. If there are no tables, output nothing.",
+                  },
+                  { type: "image_url", image_url: { url: `data:image/png;base64,${imageBase64}` } },
+                ],
+              },
+            ],
+            // k3 is a reasoning-only model on this endpoint — it rejects any
+            // temperature other than 1.
+            temperature: 1,
+            max_tokens: 4000,
+            stream: false,
+          }),
+        });
+      } catch (err) {
+        return NextResponse.json({ error: "Kimi is unreachable" }, { status: 502 });
+      }
+
+      if (!res.ok) {
+        let detail = "";
+        try {
+          const errBody = await res.json();
+          detail = String(errBody?.error?.message ?? errBody?.error ?? "").trim();
+        } catch {
+          /* non-JSON error body */
+        }
+        return NextResponse.json(
+          { error: detail ? `Cloud OCR request failed (${res.status}): ${detail}` : `Cloud OCR request failed (${res.status})` },
+          { status: 502 }
+        );
+      }
+
+      const data = await res.json();
+      const text = data.choices?.[0]?.message?.content ?? "";
+      return NextResponse.json({ text: String(text).trim() });
     }
 
     if (action === "deepseek-chat") {

@@ -3,7 +3,7 @@
  * Smart PDF to Excel converter with multi-engine table detection.
  *
  * Engines (in priority order):
- *   1. Cloud AI (Nemotron OCR v2) — most accurate, requires API
+ *   1. Cloud AI (Kimi Vision — K3) — most accurate, opt-in, requires API key
  *   2. TATR (Microsoft Table Transformer) — on-device visual detection
  *   3. Smart Cluster — improved gap-analysis fallback
  *
@@ -107,13 +107,13 @@ export async function convertPdfToXlsx(
 
     let tables: string[][][] = [];
 
-    // Try 1: Cloud AI (Nemotron OCR v2)
+    // Try 1: Cloud AI (Kimi Vision — K3)
     if (cloudEnhance) {
       try {
         onProgress?.({ phase: "detect", message: `Cloud AI table detection on page ${pageIdx}…`, percent: 20 });
         const canvas = await renderPageToCanvas(page, 2.0);
         const pngBase64 = canvas.toDataURL("image/png").split(",")[1];
-        const grid = await extractTableWithNemotron(pngBase64);
+        const grid = await extractTableWithKimiVision(pngBase64);
         if (grid.length > 0) {
           tables.push(grid);
         }
@@ -294,20 +294,20 @@ function detectHeaderRow(grid: string[][]): boolean {
 
 // ─── Cloud AI table extraction ──────────────────────────────────────────────
 
-async function extractTableWithNemotron(pngBase64: string): Promise<string[][]> {
+async function extractTableWithKimiVision(pngBase64: string): Promise<string[][]> {
   const res = await fetch("/api/ai", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action: "nemotron-ocr", imageBase64: pngBase64 }),
+    body: JSON.stringify({ action: "vision-ocr", imageBase64: pngBase64 }),
   });
 
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(`Nemotron OCR Proxy ${res.status}: ${errText.slice(0, 200)}`);
+    throw new Error(`Kimi Vision OCR Proxy ${res.status}: ${errText.slice(0, 200)}`);
   }
 
   const data = await res.json();
-  let markdown = data.text || "";
+  const markdown = data.text || "";
 
   // Parse markdown tables into a 2D grid
   const lines = markdown.split("\n");

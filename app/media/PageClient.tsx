@@ -6,12 +6,15 @@ import Dropzone from "@/components/Dropzone";
 import { useConversions } from "@/app/providers";
 import { FFmpeg } from "@ffmpeg/ffmpeg";
 import { fetchFile, toBlobURL } from "@ffmpeg/util";
-import { Video, Music, Star, AlertTriangle, Download, Loader2, Cpu } from "lucide-react";
+import { Video, Music, Star, AlertTriangle, Download, Loader2, Cpu, Sparkles, Copy, Check } from "lucide-react";
 
-type MediaMode = "compress" | "extract" | "audio-trim";
+type MediaMode = "compress" | "extract" | "audio-trim" | "transcribe";
 
 // Single-threaded core — no SharedArrayBuffer, so no COOP/COEP headers required.
 const CORE_BASE = "https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd";
+
+// Conservative client-side precheck; the server enforces the real limit.
+const MAX_TRANSCRIBE_BYTES = 25 * 1024 * 1024;
 
 export function MediaPageClient() {
   const [mode, setMode] = useState<MediaMode>("compress");
@@ -28,6 +31,8 @@ export function MediaPageClient() {
   const [outputUrl, setOutputUrl] = useState<string | null>(null);
   const [outputName, setOutputName] = useState("output");
   const [outputIsVideo, setOutputIsVideo] = useState(false);
+  const [transcript, setTranscript] = useState<string | null>(null);
+  const [transcriptCopied, setTranscriptCopied] = useState(false);
 
   React.useEffect(() => () => {
     if (outputUrl?.startsWith("blob:")) URL.revokeObjectURL(outputUrl);
@@ -153,12 +158,110 @@ export function MediaPageClient() {
     }
   };
 
+  // Cloud AI (opt-in): transcribes via Groq Whisper. Unlike the FFmpeg modes
+  // above, this sends the audio track to Groq's API.
+  const runTranscription = async () => {
+    if (!selectedFile) return;
+    setProcessing(true);
+    setError(null);
+    setTranscript(null);
+    setProgress(0);
+
+    try {
+      let audioBlob: Blob = selectedFile;
+      let audioName = selectedFile.name;
+
+      if (!selectedFile.type.startsWith("audio/")) {
+        // Video input — extract just the audio track first so we upload a
+        // small audio file instead of the full video.
+        const ffmpeg = await ensureEngine();
+        const inputName = `input.${getExt(selectedFile.name)}`;
+        await ffmpeg.writeFile(inputName, await fetchFile(selectedFile));
+        await ffmpeg.exec(["-i", inputName, "-vn", "-b:a", "128k", "extracted.mp3"]);
+        const data = (await ffmpeg.readFile("extracted.mp3")) as Uint8Array;
+        if (!data || data.length === 0) {
+          throw new Error("Could not extract an audio track from this file.");
+        }
+        audioBlob = new Blob([data.buffer as ArrayBuffer], { type: "audio/mpeg" });
+        audioName = "extracted.mp3";
+        try {
+          await ffmpeg.deleteFile(inputName);
+          await ffmpeg.deleteFile("extracted.mp3");
+        } catch {
+          /* ignore */
+        }
+      }
+
+      if (audioBlob.size > MAX_TRANSCRIBE_BYTES) {
+        throw new Error(
+          `Audio is too large to transcribe (${(audioBlob.size / (1024 * 1024)).toFixed(1)}MB). Limit is ${
+            MAX_TRANSCRIBE_BYTES / (1024 * 1024)
+          }MB.`
+        );
+      }
+
+      setProgress(60);
+      const form = new FormData();
+      form.append("file", audioBlob, audioName);
+
+      const res = await fetch("/api/ai/transcribe", { method: "POST", body: form });
+      if (!res.ok) {
+        let message = `Transcription failed (${res.status})`;
+        try {
+          const body = await res.json();
+          if (body?.error) message = String(body.error);
+        } catch {
+          /* non-JSON error body */
+        }
+        if (res.status === 503) {
+          message = `${message}. Set GROQ_API_KEY in .env.local and restart the dev server.`;
+        }
+        throw new Error(message);
+      }
+
+      const data = await res.json();
+      const text = String(data.text || "").trim();
+      setTranscript(text || "_No speech was detected in this audio._");
+      setProgress(100);
+
+      addHistoryItem({
+        fileName: `${selectedFile.name.replace(/\.[^.]+$/, "")}_transcript.txt`,
+        fileSize: text.length,
+        toolType: "media-transcribe",
+        status: "success",
+      });
+    } catch (e: any) {
+      console.error("Transcription failed:", e);
+      setError(e?.message || "Transcription failed.");
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const downloadTranscript = () => {
+    if (!transcript || !selectedFile) return;
+    const blob = new Blob([transcript], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${selectedFile.name.replace(/\.[^.]+$/, "")}_transcript.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const copyTranscript = async () => {
+    if (!transcript) return;
+    await navigator.clipboard.writeText(transcript);
+    setTranscriptCopied(true);
+    setTimeout(() => setTranscriptCopied(false), 1500);
+  };
+
   const isPinned = favorites.includes("media-tools");
 
   return (
     <ToolLayout
       title="Video & Audio Studio"
-      description="Compress audio, extract MP3 from video, and trim clips — powered by FFmpeg compiled to WebAssembly, running entirely in your browser."
+      description="Compress audio, extract MP3 from video, trim clips, and transcribe speech to text — FFmpeg tools run locally; transcription is Cloud AI (opt-in)."
       category="media"
     >
       <div className="space-y-6">
@@ -169,12 +272,14 @@ export function MediaPageClient() {
               { id: "compress", label: "Media Compressor" },
               { id: "extract", label: "Extract Audio" },
               { id: "audio-trim", label: "Audio Cutter" },
+              { id: "transcribe", label: "Transcribe" },
             ].map((t) => (
               <button
                 key={t.id}
                 onClick={() => {
                   setMode(t.id as MediaMode);
                   setOutputUrl(null);
+                  setTranscript(null);
                   setError(null);
                 }}
                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${
@@ -202,21 +307,34 @@ export function MediaPageClient() {
         </div>
 
         {/* Engine status banner */}
-        <div className="p-3.5 rounded-xl border border-indigo-500/20 bg-indigo-50/50 dark:bg-indigo-950/10 flex items-start space-x-2.5">
-          <Cpu className="w-4 h-4 text-indigo-500 mt-0.5 flex-shrink-0" />
-          <div className="text-xs text-indigo-700 dark:text-indigo-400">
-            <span className="font-bold block">FFmpeg WebAssembly Engine</span>
-            <span>
-              {engineState === "ready"
-                ? "Engine ready. All processing happens locally in your browser — files never leave your device."
-                : engineState === "loading"
-                ? "Loading the FFmpeg engine (~25MB, first use only)…"
-                : engineState === "error"
-                ? "The engine failed to load. It is fetched from a CDN — check your connection and retry."
-                : "The engine (~25MB) loads from a CDN on first run, then processes everything locally."}
-            </span>
+        {mode === "transcribe" ? (
+          <div className="p-3.5 rounded-xl border border-amber-500/30 bg-amber-50/50 dark:bg-amber-950/10 flex items-start space-x-2.5">
+            <Sparkles className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
+            <div className="text-xs text-amber-700 dark:text-amber-400">
+              <span className="font-bold block">Cloud AI — Groq Whisper</span>
+              <span>
+                Video input is first trimmed to audio locally, then the audio track is sent to Groq's Whisper API for
+                transcription. This is the only mode on this page that sends data off your device.
+              </span>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="p-3.5 rounded-xl border border-indigo-500/20 bg-indigo-50/50 dark:bg-indigo-950/10 flex items-start space-x-2.5">
+            <Cpu className="w-4 h-4 text-indigo-500 mt-0.5 flex-shrink-0" />
+            <div className="text-xs text-indigo-700 dark:text-indigo-400">
+              <span className="font-bold block">FFmpeg WebAssembly Engine</span>
+              <span>
+                {engineState === "ready"
+                  ? "Engine ready. All processing happens locally in your browser — files never leave your device."
+                  : engineState === "loading"
+                  ? "Loading the FFmpeg engine (~25MB, first use only)…"
+                  : engineState === "error"
+                  ? "The engine failed to load. It is fetched from a CDN — check your connection and retry."
+                  : "The engine (~25MB) loads from a CDN on first run, then processes everything locally."}
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* Dropzone */}
         <Dropzone
@@ -224,7 +342,7 @@ export function MediaPageClient() {
           accept={mode === "audio-trim" ? "audio/*" : "video/*,audio/*"}
           multiple={false}
           maxSizeMB={200}
-          title={mode === "audio-trim" ? "Upload an audio file to trim" : "Upload media (MP4, MOV, MP3, WAV…)"}
+          title={mode === "audio-trim" ? "Upload an audio file to trim" : mode === "transcribe" ? "Upload audio or video to transcribe" : "Upload media (MP4, MOV, MP3, WAV…)"}
         />
 
         {/* Configurations */}
@@ -314,20 +432,32 @@ export function MediaPageClient() {
 
             {/* Action Button */}
             <button
-              onClick={runConversion}
+              onClick={mode === "transcribe" ? runTranscription : runConversion}
               disabled={processing}
-              className="px-6 py-2.5 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50 transition-all flex items-center space-x-1.5 shadow-md"
+              className={`px-6 py-2.5 rounded-lg text-xs font-semibold text-white disabled:opacity-50 transition-all flex items-center space-x-1.5 shadow-md ${
+                mode === "transcribe" ? "bg-amber-500 hover:bg-amber-600" : "bg-indigo-600 hover:bg-indigo-700"
+              }`}
             >
-              {processing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Video className="w-3.5 h-3.5" />}
+              {processing ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : mode === "transcribe" ? (
+                <Sparkles className="w-3.5 h-3.5" />
+              ) : (
+                <Video className="w-3.5 h-3.5" />
+              )}
               <span>
                 {processing
-                  ? engineState === "loading"
+                  ? mode === "transcribe"
+                    ? "Transcribing…"
+                    : engineState === "loading"
                     ? "Loading engine…"
                     : "Processing…"
                   : mode === "extract"
                   ? "Extract Audio"
                   : mode === "audio-trim"
                   ? "Trim Audio"
+                  : mode === "transcribe"
+                  ? "Transcribe Audio"
                   : "Compress Media"}
               </span>
             </button>
@@ -369,6 +499,42 @@ export function MediaPageClient() {
             ) : (
               <audio controls src={outputUrl} className="w-full" />
             )}
+          </div>
+        )}
+
+        {/* Transcript output */}
+        {transcript && (
+          <div className="p-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <div className="p-2 rounded bg-emerald-500/10 text-emerald-500">
+                  <Sparkles className="w-5 h-5" />
+                </div>
+                <div>
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">Transcript Ready</span>
+                  <span className="text-[10px] text-slate-400 truncate max-w-xs block">Groq Whisper Large v3 Turbo</span>
+                </div>
+              </div>
+              <div className="flex items-center space-x-2">
+                <button
+                  onClick={copyTranscript}
+                  className="px-3 py-2 rounded-lg text-xs font-semibold border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all flex items-center space-x-1.5"
+                >
+                  {transcriptCopied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{transcriptCopied ? "Copied" : "Copy"}</span>
+                </button>
+                <button
+                  onClick={downloadTranscript}
+                  className="px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-500 hover:bg-emerald-600 text-white transition-all shadow-sm flex items-center space-x-1.5"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download .txt</span>
+                </button>
+              </div>
+            </div>
+            <div className="p-3.5 rounded-lg bg-white/60 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 text-xs leading-relaxed text-slate-700 dark:text-slate-300 whitespace-pre-wrap max-h-96 overflow-y-auto">
+              {transcript}
+            </div>
           </div>
         )}
       </div>
