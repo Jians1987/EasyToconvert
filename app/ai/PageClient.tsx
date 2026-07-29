@@ -4,7 +4,7 @@ import React, { useState } from "react";
 import ToolLayout from "@/components/ToolLayout";
 import Dropzone from "@/components/Dropzone";
 import { useConversions } from "@/app/providers";
-import { ocrImage, ocrImageWithNemotron, ocrImageWithUnlimitedOcr, looksScanned } from "@/app/lib/ocr";
+import { ocrImage, ocrImageWithUnlimitedOcr, looksScanned } from "@/app/lib/ocr";
 import { Sparkles, Star, BrainCircuit, Key, Send, FileText, Info, ScanText } from "lucide-react";
 
 type AiMode = "summarize" | "explain" | "translate" | "ocr";
@@ -120,7 +120,7 @@ export function AiPageClient() {
   const [targetLang, setTargetLang] = useState("Spanish");
   const [ocrProgress, setOcrProgress] = useState(0);
   const [ocrStatus, setOcrStatus] = useState("");
-  const [ocrEngine, setOcrEngine] = useState<"local" | "nemotron" | "unlimited">("local");
+  const [ocrEngine, setOcrEngine] = useState<"unlimited">("unlimited");
   const { addHistoryItem, favorites, toggleFavorite } = useConversions();
 
   const handleFilesSelected = (files: File[]) => {
@@ -193,12 +193,7 @@ export function AiPageClient() {
             const ctx = canvas.getContext("2d");
             if (ctx) {
               await page.render({ canvasContext: ctx, viewport }).promise;
-              const { text: ocrText, confidence } =
-                ocrEngine === "unlimited"
-                  ? await ocrImageWithUnlimitedOcr(canvas, setOcrProgress)
-                  : ocrEngine === "nemotron"
-                  ? await ocrImageWithNemotron(canvas, setOcrProgress)
-                  : await ocrImage(canvas, setOcrProgress);
+              const { text: ocrText, confidence } = await ocrImageWithUnlimitedOcr(canvas, setOcrProgress);
                 
               if (ocrText.trim()) {
                 ocrPagesUsed++;
@@ -213,15 +208,8 @@ export function AiPageClient() {
         }
         setOcrStatus("");
 
-        const ocrEngineLabel =
-          ocrEngine === "unlimited"
-            ? "Baidu Unlimited-OCR (SGLang/vLLM)"
-            : ocrEngine === "nemotron"
-            ? "NVIDIA Nemotron OCR v2 (Cloud AI)"
-            : "on-device OCR (Tesseract.js)";
-
         const ocrNote = ocrPagesUsed > 0
-          ? `\n\n**${ocrPagesUsed} scanned page${ocrPagesUsed > 1 ? "s were" : " was"} read with ${ocrEngineLabel}.**`
+          ? `\n\n**${ocrPagesUsed} scanned page${ocrPagesUsed > 1 ? "s were" : " was"} read with Baidu Unlimited-OCR.**`
           : "";
         
         setOcrStatus("DeepSeek is thinking (reading document)...");
@@ -238,23 +226,11 @@ export function AiPageClient() {
           setProcessing(false);
           return;
         }
-        setOcrStatus("Recognizing text…");
-        const { text: ocrText, confidence } =
-          ocrEngine === "unlimited"
-            ? await ocrImageWithUnlimitedOcr(selectedFile, setOcrProgress)
-            : ocrEngine === "nemotron"
-            ? await ocrImageWithNemotron(selectedFile, setOcrProgress)
-            : await ocrImage(selectedFile, setOcrProgress);
+        setOcrStatus("Recognizing text with Unlimited OCR…");
+        const { text: ocrText, confidence } = await ocrImageWithUnlimitedOcr(selectedFile, setOcrProgress);
         setOcrStatus("");
 
-        const ocrEngineLabel =
-          ocrEngine === "unlimited"
-            ? "Baidu Unlimited-OCR (Structural Markdown & LaTeX)"
-            : ocrEngine === "nemotron"
-            ? "NVIDIA Nemotron OCR v2 (Cloud AI)"
-            : "Tesseract.js (on-device, private)";
-
-        result = `### 🔎 Image OCR — Extracted Text\n\n**File**: ${selectedFile.name}\n**Confidence**: ${confidence}%\n**Engine**: ${ocrEngineLabel}\n\n---\n\n${ocrText || "_No readable text was found in this image._"}`;
+        result = `### 🔎 Image OCR — Extracted Text\n\n**File**: ${selectedFile.name}\n**Confidence**: ${confidence}%\n**Engine**: Baidu Unlimited-OCR (Structural Markdown & LaTeX)\n\n---\n\n${ocrText || "_No readable text was found in this image._"}`;
 
       } else if (mode === "explain") {
         if (!inputText.trim()) {
@@ -437,60 +413,14 @@ export function AiPageClient() {
             )}
 
             {(mode === "summarize" || mode === "ocr") && (
-              <div className="space-y-2">
-                <label className="text-[10px] uppercase font-bold text-slate-400">OCR Engine</label>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setOcrEngine("local")}
-                    className={`flex-1 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-                      ocrEngine === "local"
-                        ? "bg-indigo-600 text-white shadow-md shadow-indigo-500/20"
-                        : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200"
-                    }`}
-                  >
-                    Tesseract (On-Device)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setOcrEngine("nemotron")}
-                    className={`flex-1 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-                      ocrEngine === "nemotron"
-                        ? "bg-amber-500 text-white shadow-md shadow-amber-500/20"
-                        : "bg-slate-100 dark:bg-slate-800 text-amber-700 dark:text-amber-400 hover:bg-slate-200"
-                    }`}
-                  >
-                    <Sparkles className="w-3 h-3 inline mr-1" />
-                    Nemotron OCR
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setOcrEngine("unlimited")}
-                    className={`flex-1 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-                      ocrEngine === "unlimited"
-                        ? "bg-emerald-600 text-white shadow-md shadow-emerald-500/20"
-                        : "bg-slate-100 dark:bg-slate-800 text-emerald-700 dark:text-emerald-400 hover:bg-slate-200"
-                    }`}
-                  >
-                    <Sparkles className="w-3 h-3 inline mr-1" />
-                    Unlimited OCR (Baidu)
-                  </button>
+              <div className="p-3 rounded-xl border border-emerald-500/30 bg-emerald-50/50 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-300 text-xs font-medium flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-emerald-500 shrink-0" />
+                <div>
+                  <p className="font-bold">Engine: Baidu Unlimited-OCR</p>
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
+                    One-shot long-horizon parsing for structural Markdown, LaTeX formulas, & complex table layouts.
+                  </p>
                 </div>
-                {ocrEngine === "local" && (
-                  <p className="text-[10px] text-slate-400">
-                    Runs locally in your browser via WebAssembly. Fast & private.
-                  </p>
-                )}
-                {ocrEngine === "nemotron" && (
-                  <p className="text-[10px] text-amber-600 dark:text-amber-400">
-                    NVIDIA Nemotron OCR v2 — Cloud vision AI for high accuracy.
-                  </p>
-                )}
-                {ocrEngine === "unlimited" && (
-                  <p className="text-[10px] text-emerald-600 dark:text-emerald-400">
-                    Baidu Unlimited-OCR — One-shot long-horizon parsing for Markdown, LaTeX, & complex layouts.
-                  </p>
-                )}
               </div>
             )}
 

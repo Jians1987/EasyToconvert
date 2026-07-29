@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { runJopdfTask } from "../jopdfRunner";
+import { PDFDocument } from "pdf-lib";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -19,15 +19,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "File must be 50MB or smaller." }, { status: 413 });
     }
 
-    const outputBuffer = await runJopdfTask({
-      file,
-      inputExt: "pdf",
-      outputExt: "pdf",
-      jopdfMode: "compress",
-      jopdfOptions: "level=high;",
-    });
+    const inputBuffer = await file.arrayBuffer();
+    const pdfDoc = await PDFDocument.load(inputBuffer, { ignoreEncryption: true });
 
-    return new Response(new Uint8Array(outputBuffer), {
+    // Re-save with object streams enabled for maximum size optimization
+    const outputBytes = await pdfDoc.save({ useObjectStreams: true });
+
+    return new Response(Buffer.from(outputBytes), {
       headers: {
         "Content-Type": "application/pdf",
         "Content-Disposition": `attachment; filename="compressed_${file.name}"`,

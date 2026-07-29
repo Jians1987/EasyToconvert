@@ -4,7 +4,7 @@ import React, { useState, useMemo, useEffect, useRef } from "react";
 import ToolLayout from "@/components/ToolLayout";
 import Dropzone from "@/components/Dropzone";
 import { useConversions } from "@/app/providers";
-import { ocrImage, ocrImageWithNemotron } from "@/app/lib/ocr";
+import { ocrImage, ocrImageWithUnlimitedOcr } from "@/app/lib/ocr";
 import { convertPdfToDocx, type DocxProgress, type ConvertDocxOptions } from "@/app/lib/pdfToDocx";
 import { extractPdfText } from "@/app/lib/pdfTextExtractor";
 import { convertPdfToXlsx, type XlsxProgress, type TableEngine } from "@/app/lib/pdfToXlsx";
@@ -322,7 +322,7 @@ export function PdfPageClient() {
   const [totalPages, setTotalPages] = useState(0);
   const [docFidelity, setDocFidelity] = useState<"layout" | "text" | "image">("layout");
   const [ocrEnabled, setOcrEnabled] = useState(true);
-  const [ocrEngine, setOcrEngine] = useState<"local" | "cloud" | "unlimited">("local");
+  const [ocrEngine, setOcrEngine] = useState<"unlimited">("unlimited");
 
   const [cloudEnhance, setCloudEnhance] = useState(false);
   // Engine selector for PDF → Excel. "tatr" = Microsoft Table Transformer (on-device DETR);
@@ -870,11 +870,9 @@ export function PdfPageClient() {
         const file = selectedFiles[0];
         let blob: Blob | undefined;
         const imgScale = isUnlimited ? 3 : 2;
-        const ocrFallback = ocrEnabled
-          ? (ocrEngine === "unlimited" ? "unlimited" : (ocrEngine === "cloud" && isUnlimited ? "cloud" : "local"))
-          : "none";
+        const ocrFallback = ocrEnabled ? "unlimited" : "none";
 
-        // Browser engine runner (structured/text/image + OCR for scanned pages)
+        // Browser engine runner (structured/text/image + Unlimited OCR for scanned pages)
         const runBrowserEngine = async (label: string) => {
           setTatrProgressLabel(label);
           setTatrProgressPct(15);
@@ -890,11 +888,6 @@ export function PdfPageClient() {
           );
         };
 
-        // ── Pre-scan: does this PDF actually contain embedded text? ──────────
-        // JOPDF/Aspose reports success on scanned PDFs but produces an empty,
-        // image-only Word file (no OCR). We detect scanned PDFs up front and
-        // route them to OCR-capable engines instead of letting JOPDF swallow
-        // them silently.
         let isScannedPdf = false;
         if (docFidelity !== "image") {
           try {
@@ -905,7 +898,6 @@ export function PdfPageClient() {
               (sum, page) => sum + page.reduce((t, i) => t + i.str.replace(/\s/g, "").length, 0),
               0
             );
-            // Fewer than ~40 non-space characters per page → effectively a scan
             isScannedPdf = totalNonSpace < Math.max(40 * numPages, 40);
           } catch (scanErr) {
             console.warn("Pre-scan failed, assuming digital PDF:", scanErr);
@@ -913,13 +905,9 @@ export function PdfPageClient() {
         }
 
         if (docFidelity === "image") {
-          // Exact-layout image mode — only the browser engine produces true
-          // image output; JOPDF would override it with text extraction.
           blob = await runBrowserEngine(`Rendering exact-layout image (${imgScale}× quality)…`);
 
         } else if (isScannedPdf && ocrEnabled) {
-          // ── Scanned PDF + OCR on: skip JOPDF (no OCR). Adobe has built-in OCR;
-          //    browser engine (Tesseract/Nemotron) is the always-available fallback.
           try {
             setTatrProgressLabel("Scanned PDF detected · Engine 1/2: Adobe OCR (cloud)…");
             setTatrProgressPct(10);
@@ -927,42 +915,23 @@ export function PdfPageClient() {
             setTatrProgressLabel("Conversion complete (Adobe OCR)");
             setTatrProgressPct(100);
           } catch (adobeErr) {
-            console.warn("Adobe OCR unavailable, using browser OCR:", adobeErr);
-            const engineName = ocrFallback === "cloud" ? "Nemotron Cloud OCR" : "Tesseract OCR";
-            blob = await runBrowserEngine(`Scanned PDF · Engine 2/2: Browser (${engineName})…`);
+            console.warn("Adobe OCR unavailable, using Unlimited OCR:", adobeErr);
+            blob = await runBrowserEngine("Scanned PDF · Baidu Unlimited OCR…");
           }
 
         } else {
-          // ── Digital text PDF: JOPDF (Aspose) → Adobe → browser. ─────────────
           try {
-            setTatrProgressLabel("Engine 1/3: JOPDF server…");
-            setTatrProgressPct(5);
-            const fd = new FormData();
-            fd.append("file", file);
-            fd.append("format", "docx");
-            const res = await fetch("/api/pdf/jopdf-export", { method: "POST", body: fd });
-            if (!res.ok) {
-              const e = await res.json().catch(() => ({}));
-              throw new Error(e.error || "JOPDF unavailable");
-            }
-            blob = await res.blob();
-            setTatrProgressLabel("Conversion complete (JOPDF)");
+            setTatrProgressLabel("Engine 1/2: Adobe PDF Services (cloud)…");
+            setTatrProgressPct(10);
+            blob = await convertPdfToDocxWithAdobe(file, inputPassword || undefined);
+            setTatrProgressLabel("Conversion complete (Adobe PDF Services)");
             setTatrProgressPct(100);
-          } catch (jopdfErr) {
-            console.warn("JOPDF failed:", jopdfErr);
-            try {
-              setTatrProgressLabel("Engine 2/3: Adobe PDF Services (cloud)…");
-              setTatrProgressPct(10);
-              blob = await convertPdfToDocxWithAdobe(file, inputPassword || undefined);
-              setTatrProgressLabel("Conversion complete (Adobe PDF Services)");
-              setTatrProgressPct(100);
-            } catch (adobeErr) {
-              console.warn("Adobe PDF Services failed:", adobeErr);
-              const modeLabel = docFidelity === "text"
-                ? "plain text"
-                : `structured text${ocrEnabled ? " + OCR" : ""}`;
-              blob = await runBrowserEngine(`Engine 3/3: Browser (${modeLabel})…`);
-            }
+          } catch (adobeErr) {
+            console.warn("Adobe PDF Services unavailable, using browser engine:", adobeErr);
+            const modeLabel = docFidelity === "text"
+              ? "plain text"
+              : `structured text${ocrEnabled ? " + Unlimited OCR" : ""}`;
+            blob = await runBrowserEngine(`Engine 2/2: Browser (${modeLabel})…`);
           }
         }
 
@@ -979,45 +948,18 @@ export function PdfPageClient() {
 
       } else if (mode === "to-excel") {
         const file = selectedFiles[0];
-        let blob: Blob;
-        let sheetCount = 1;
-        let totalTables = 0;
-
-        // ── Tier 1: JOPDF server (pdf2office — preserves table structure) ────
-        try {
-          setTatrProgressLabel("Engine 1/2: JOPDF server (Excel)…");
-          setTatrProgressPct(5);
-          const fd = new FormData();
-          fd.append("file", file);
-          fd.append("format", "xlsx");
-          const res = await fetch("/api/pdf/jopdf-export", { method: "POST", body: fd });
-          if (!res.ok) {
-            const e = await res.json().catch(() => ({}));
-            throw new Error(e.error || "JOPDF Excel unavailable");
+        setTatrProgressLabel("Extracting tables with Unlimited OCR & TATR…");
+        setTatrProgressPct(10);
+        const { blob, sheetCount, totalTables } = await convertPdfToXlsx(
+          file,
+          tableEngine,
+          inputPassword || undefined,
+          cloudEnhance,
+          (p) => {
+            setTatrProgressLabel(p.message);
+            setTatrProgressPct(p.percent);
           }
-          blob = await res.blob();
-          setTatrProgressLabel("Conversion complete (JOPDF)");
-          setTatrProgressPct(100);
-        } catch (serverErr) {
-          console.warn("JOPDF Excel failed, using browser engine:", serverErr);
-
-          // ── Tier 2: Browser (TATR table detection + smart clustering) ────────
-          setTatrProgressLabel("Engine 2/2: Browser table extraction…");
-          setTatrProgressPct(10);
-          const result = await convertPdfToXlsx(
-            file,
-            tableEngine,
-            inputPassword || undefined,
-            cloudEnhance,
-            (p) => {
-              setTatrProgressLabel(p.message);
-              setTatrProgressPct(p.percent);
-            }
-          );
-          blob = result.blob;
-          sheetCount = result.sheetCount;
-          totalTables = result.totalTables;
-        }
+        );
 
         const url = URL.createObjectURL(blob!);
         setDownloadUrl(url);
@@ -1510,66 +1452,12 @@ export function PdfPageClient() {
                     {ocrEnabled && (
                       <div className="space-y-2">
                         <p className="text-[10px] text-slate-500 leading-relaxed">
-                          Pages with no embedded text are automatically detected and put through OCR to extract readable content.
+                          Pages with no embedded text are automatically parsed using <strong>Baidu Unlimited-OCR</strong> for state-of-the-art structural Markdown, LaTeX formulas, and table detection.
                         </p>
-                        <div className="flex flex-wrap gap-2">
-                          <button
-                            onClick={() => setOcrEngine("local")}
-                            className={`flex-1 px-3 py-1.5 rounded-lg text-[10px] font-semibold transition-all ${
-                              ocrEngine === "local"
-                                ? "bg-indigo-600 text-white"
-                                : "bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300"
-                            }`}
-                          >
-                            Tesseract (On-Device)
-                          </button>
-                          {isUnlimited ? (
-                            <button
-                              onClick={() => setOcrEngine("cloud")}
-                              className={`flex-1 px-3 py-1.5 rounded-lg text-[10px] font-semibold transition-all ${
-                                ocrEngine === "cloud"
-                                  ? "bg-amber-500 text-white"
-                                  : "bg-white dark:bg-slate-800 border border-amber-300 dark:border-amber-600 text-amber-700 dark:text-amber-400"
-                              }`}
-                            >
-                              <Zap className="w-2.5 h-2.5 inline mr-0.5" />
-                              Nemotron Cloud (Pro)
-                            </button>
-                          ) : (
-                            <button
-                              onClick={openAuthModal}
-                              className="flex-1 px-3 py-1.5 rounded-lg text-[10px] font-semibold border border-dashed border-indigo-300 dark:border-indigo-600 text-indigo-500 dark:text-indigo-400"
-                            >
-                              Sign in for Cloud OCR
-                            </button>
-                          )}
-                          <button
-                            onClick={() => setOcrEngine("unlimited")}
-                            className={`flex-1 px-3 py-1.5 rounded-lg text-[10px] font-semibold transition-all ${
-                              ocrEngine === "unlimited"
-                                ? "bg-emerald-600 text-white"
-                                : "bg-white dark:bg-slate-800 border border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-400"
-                            }`}
-                          >
-                            <Sparkles className="w-2.5 h-2.5 inline mr-0.5" />
-                            Unlimited OCR (Baidu)
-                          </button>
+                        <div className="p-2.5 rounded-xl border border-emerald-500/30 bg-emerald-50/50 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-300 text-[11px] font-medium flex items-center gap-2">
+                          <Sparkles className="w-4 h-4 text-emerald-500 shrink-0" />
+                          <span>Engine: Baidu Unlimited-OCR (One-Shot Long-Horizon Visual Parsing)</span>
                         </div>
-                        {ocrEngine === "local" && (
-                          <p className="text-[10px] text-slate-400">
-                            Tesseract.js runs entirely in your browser. Private, no upload. Takes ~5–15s per scanned page.
-                          </p>
-                        )}
-                        {ocrEngine === "cloud" && isUnlimited && (
-                          <p className="text-[10px] text-amber-600 dark:text-amber-400">
-                            NVIDIA Nemotron OCR — far higher accuracy for complex layouts, handwriting, and non-Latin scripts. Page images sent to cloud.
-                          </p>
-                        )}
-                        {ocrEngine === "unlimited" && (
-                          <p className="text-[10px] text-emerald-600 dark:text-emerald-400">
-                            Baidu Unlimited-OCR — State-of-the-art visual document model for structural Markdown, LaTeX formulas, and table parsing.
-                          </p>
-                        )}
                       </div>
                     )}
                   </div>

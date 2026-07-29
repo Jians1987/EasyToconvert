@@ -37,7 +37,7 @@ export interface DocxProgress {
 
 export interface ConvertDocxOptions {
   imageScale?: number;         // render scale for image mode — 2=standard, 3=Pro quality
-  ocrFallback?: "none" | "local" | "cloud" | "unlimited"; // "local"=Tesseract.js, "cloud"=Nemotron, "unlimited"=Baidu Unlimited OCR
+  ocrFallback?: "none" | "unlimited"; // "unlimited"=Baidu Unlimited OCR
 }
 
 // ── Public API ───────────────────────────────────────────────────────────────
@@ -93,10 +93,10 @@ export async function convertPdfToDocx(
 
       allElements.push(...elements);
     } else if (ocrFallback !== "none") {
-      // ── Scanned page: render → OCR → Word paragraphs ──────────────────
+      // ── Scanned page: render → Unlimited OCR → Word paragraphs ────────
       onProgress?.({
         phase: "extract",
-        message: `Page ${pageNum}: scanned — rendering for OCR…`,
+        message: `Page ${pageNum}: scanned — rendering for Unlimited OCR…`,
         percent: basePercent,
         page: pageNum,
         totalPages: numPages,
@@ -104,47 +104,16 @@ export async function convertPdfToDocx(
 
       const canvas = await renderPdfJsPageToCanvas(page, 3.0);
 
-      if (ocrFallback === "unlimited") {
-        onProgress?.({
-          phase: "extract",
-          message: `Page ${pageNum}: Baidu Unlimited OCR…`,
-          percent: basePercent + 1,
-          page: pageNum,
-          totalPages: numPages,
-        });
-        const { ocrImageWithUnlimitedOcr } = await import("./ocr");
-        const result = await ocrImageWithUnlimitedOcr(canvas);
-        allElements.push(...rawTextToParagraphs(result.text, pageNum));
-      } else if (ocrFallback === "cloud") {
-        onProgress?.({
-          phase: "extract",
-          message: `Page ${pageNum}: Cloud OCR (Nemotron)…`,
-          percent: basePercent + 1,
-          page: pageNum,
-          totalPages: numPages,
-        });
-        const { ocrImageWithNemotron } = await import("./ocr");
-        const result = await ocrImageWithNemotron(canvas);
-        allElements.push(...rawTextToParagraphs(result.text, pageNum));
-      } else {
-        // local Tesseract.js
-        const Tesseract = (await import("tesseract.js")).default;
-        const stepSize = Math.max(1, Math.floor(80 / numPages));
-        const result = await Tesseract.recognize(canvas, "eng", {
-          logger: (m: { status: string; progress: number }) => {
-            if (m.status === "recognizing text") {
-              onProgress?.({
-                phase: "extract",
-                message: `Page ${pageNum}: OCR ${Math.round(m.progress * 100)}%…`,
-                percent: Math.min(basePercent + Math.round(m.progress * stepSize), 84),
-                page: pageNum,
-                totalPages: numPages,
-              });
-            }
-          },
-        });
-        allElements.push(...tesseractDataToParagraphs(result.data));
-      }
+      onProgress?.({
+        phase: "extract",
+        message: `Page ${pageNum}: Baidu Unlimited OCR…`,
+        percent: basePercent + 1,
+        page: pageNum,
+        totalPages: numPages,
+      });
+      const { ocrImageWithUnlimitedOcr } = await import("./ocr");
+      const result = await ocrImageWithUnlimitedOcr(canvas);
+      allElements.push(...rawTextToParagraphs(result.text, pageNum));
     } else {
       // Scanned but no OCR — add a placeholder so the page isn't silently dropped
       allElements.push(
@@ -236,85 +205,6 @@ function rawTextToParagraphs(text: string, _pageNum?: number): Paragraph[] {
           alignment: AlignmentType.JUSTIFIED,
         })
     );
-}
-
-/**
- * Convert Tesseract result data into Word paragraphs.
- * Prefers block → paragraph hierarchy for best structure.
- * Applies confidence filtering and heuristic heading detection.
- */
-function tesseractDataToParagraphs(data: any): Paragraph[] {
-  // Build a flat list of Tesseract paragraph objects from blocks (preferred)
-  // or fall back directly to data.paragraphs
-  let rawParas: any[] = [];
-
-  if (Array.isArray(data.blocks) && data.blocks.length > 0) {
-    for (const block of data.blocks) {
-      // Skip TABLE blocks — they come out garbled as plain text
-      if (block.blocktype === "TABLE" || block.blocktype === "VERT_TEXT") continue;
-      if (Array.isArray(block.paragraphs)) rawParas.push(...block.paragraphs);
-    }
-  }
-
-  if (rawParas.length === 0 && Array.isArray(data.paragraphs)) {
-    rawParas = data.paragraphs;
-  }
-
-  if (rawParas.length === 0) return rawTextToParagraphs(data.text ?? "");
-
-  const paras: Paragraph[] = [];
-
-  for (const para of rawParas) {
-    if (!para.text?.trim()) continue;
-    if ((para.confidence ?? 100) < 20) continue; // near-garbage
-
-    const text = para.text.replace(/[\r\n]+/g, " ").trim();
-    if (text.length < 2) continue;
-
-    const words = text.split(/\s+/).filter(Boolean);
-    const wordCount = words.length;
-    const confidence = para.confidence ?? 80;
-
-    // Heading signals:
-    const isAllCaps =
-      text === text.toUpperCase() && /[A-Z]/.test(text) && !/^\d/.test(text);
-    const isShortHighConf = wordCount <= 5 && confidence > 65;
-    const isMedShortHighConf = wordCount <= 8 && confidence > 75;
-
-    if ((isAllCaps && wordCount <= 10) || (isShortHighConf && wordCount <= 3)) {
-      paras.push(
-        new Paragraph({
-          heading: HeadingLevel.HEADING_2,
-          children: [new TextRun({ text, bold: true, font: "Calibri" })],
-          spacing: {
-            before: convertInchesToTwip(0.22),
-            after: convertInchesToTwip(0.06),
-          },
-        })
-      );
-    } else if (isShortHighConf || isMedShortHighConf) {
-      paras.push(
-        new Paragraph({
-          heading: HeadingLevel.HEADING_3,
-          children: [new TextRun({ text, bold: true, font: "Calibri", size: 24 })],
-          spacing: {
-            before: convertInchesToTwip(0.15),
-            after: convertInchesToTwip(0.05),
-          },
-        })
-      );
-    } else {
-      paras.push(
-        new Paragraph({
-          children: [new TextRun({ text, font: "Calibri", size: 24 })],
-          spacing: { after: convertInchesToTwip(0.1) },
-          alignment: AlignmentType.JUSTIFIED,
-        })
-      );
-    }
-  }
-
-  return paras.length > 0 ? paras : rawTextToParagraphs(data.text ?? "");
 }
 
 // ── Embedded-text helpers ────────────────────────────────────────────────────

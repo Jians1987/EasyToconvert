@@ -191,8 +191,8 @@ async function ocrTableGrid(
   cols: BBox[],
   onProgress?: ProgressFn
 ): Promise<string[][]> {
-  onProgress?.("Running Tesseract OCR on table region…", 85);
-  const { default: Tesseract } = await import("tesseract.js");
+  onProgress?.("Running Unlimited OCR on table region…", 85);
+  const { ocrImageWithUnlimitedOcr } = await import("./ocr");
 
   const sortedRows = [...rows].sort((a, b) => a.ymin - b.ymin);
   const sortedCols = [...cols].sort((a, b) => a.xmin - b.xmin);
@@ -205,8 +205,8 @@ async function ocrTableGrid(
   for (let ri = 0; ri < sortedRows.length; ri++) {
     const rb = sortedRows[ri];
     const rowCrop = cropCanvas(tableCrop, rb);
-    const res = await Tesseract.recognize(rowCrop, "eng");
-    const rowText = res.data.text.replace(/\n/g, " ").trim();
+    const res = await ocrImageWithUnlimitedOcr(rowCrop);
+    const rowText = res.text.replace(/\n/g, " ").trim();
 
     // split text into cells by column boundaries (rough heuristic)
     const rowCells: string[] = Array(sortedCols.length).fill("");
