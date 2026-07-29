@@ -320,7 +320,7 @@ export function PdfPageClient() {
   const [rotatePages, setRotatePages] = useState("all");
   const [splitPages, setSplitPages] = useState("1");
   const [totalPages, setTotalPages] = useState(0);
-  const [docFidelity, setDocFidelity] = useState<"layout" | "text" | "image">("layout");
+  const [docFidelity, setDocFidelity] = useState<"layout" | "exact" | "hybrid" | "text" | "image">("layout");
   const [ocrEnabled, setOcrEnabled] = useState(true);
   const [ocrEngine, setOcrEngine] = useState<"unlimited">("unlimited");
 
@@ -909,6 +909,10 @@ export function PdfPageClient() {
         } else {
           const modeLabel = docFidelity === "text"
             ? "plain text"
+            : docFidelity === "exact"
+            ? `Exact Layout (Editable)${ocrEnabled ? " + Unlimited OCR" : ""}`
+            : docFidelity === "hybrid"
+            ? `Full Replica (Editable)${ocrEnabled ? " + Unlimited OCR" : ""}`
             : `Structured (Editable)${ocrEnabled ? " + Unlimited OCR" : ""}`;
           blob = await runBrowserEngine(`Structuring document (${modeLabel})…`);
         }
@@ -1379,9 +1383,11 @@ export function PdfPageClient() {
                     )}
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {(["layout", "image", "text"] as const).map((f) => {
+                    {(["layout", "exact", "hybrid", "image", "text"] as const).map((f) => {
                       const labels: Record<string, string> = {
                         layout: "Structured (Editable)",
+                        exact: "Exact Layout (Editable)",
+                        hybrid: "Full Replica (Editable)",
                         image: "Exact Layout (Image)",
                         text: "Plain Text",
                       };
@@ -1401,7 +1407,9 @@ export function PdfPageClient() {
                     })}
                   </div>
                   <p className="text-[10px] text-slate-400 leading-relaxed">
-                    {docFidelity === "layout" && "Detects headings, paragraphs, bold/italic, and tables. Scanned pages are auto-OCR'd."}
+                    {docFidelity === "layout" && "Detects headings, paragraphs, bold/italic, and tables. Reflows text — best for re-editing prose. Scanned pages are auto-OCR'd."}
+                    {docFidelity === "exact" && "Places every line at its original position and re-embeds logos/photos, staying fully editable. Best for clean editing. Note: vector lines/borders/shading aren't reproduced."}
+                    {docFidelity === "hybrid" && "Full visual replica: the exact page image sits behind editable text on top. Reproduces all graphics. Best for pixel-accuracy. Larger files; edits may seam on coloured backgrounds."}
                     {docFidelity === "image" && `Renders each page as a ${isUnlimited ? "3×" : "2×"} resolution image — pixel-perfect but not editable.`}
                     {docFidelity === "text" && "Extracts raw text in reading order. Fastest option, no formatting preserved."}
                   </p>
