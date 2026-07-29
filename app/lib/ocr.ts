@@ -23,7 +23,22 @@ async function imageToBase64(image: OcrImage): Promise<string> {
   }
   
   if (image instanceof HTMLCanvasElement) {
-    return image.toDataURL("image/png").split(",")[1];
+    // If canvas is exceptionally large (>2048px width/height), scale down to save bandwidth
+    const maxDim = Math.max(image.width, image.height);
+    if (maxDim > 2048) {
+      const scale = 2048 / maxDim;
+      const targetCanvas = document.createElement("canvas");
+      targetCanvas.width = Math.round(image.width * scale);
+      targetCanvas.height = Math.round(image.height * scale);
+      const ctx = targetCanvas.getContext("2d");
+      if (ctx) {
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, targetCanvas.width, targetCanvas.height);
+        ctx.drawImage(image, 0, 0, targetCanvas.width, targetCanvas.height);
+        return targetCanvas.toDataURL("image/jpeg", 0.92).split(",")[1];
+      }
+    }
+    return image.toDataURL("image/jpeg", 0.92).split(",")[1];
   }
   
   return new Promise((resolve, reject) => {

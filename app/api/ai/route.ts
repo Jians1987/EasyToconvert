@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-const MAX_IMAGE_BASE64_LENGTH = 7_000_000;
+const MAX_IMAGE_BASE64_LENGTH = 35_000_000;
 const MAX_PROMPT_LENGTH = 50_000;
 const MAX_SYSTEM_PROMPT_LENGTH = 4_000;
 
@@ -9,7 +9,7 @@ export const maxDuration = 60;
 export async function POST(req: Request) {
   try {
     const contentLength = Number(req.headers.get("content-length") || 0);
-    if (contentLength > MAX_IMAGE_BASE64_LENGTH + 50_000) {
+    if (contentLength > MAX_IMAGE_BASE64_LENGTH + 100_000) {
       return NextResponse.json({ error: "Request payload is too large" }, { status: 413 });
     }
 
