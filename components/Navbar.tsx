@@ -126,8 +126,6 @@ export default function Navbar() {
 
             <ThemeToggle />
 
-            <ThemeToggle />
-
             {user ? (
               <div className="flex items-center space-x-2">
                 <span className="hidden lg:inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-xs font-extrabold bg-gradient-to-r from-amber-500 to-emerald-500 text-white shadow-sm">

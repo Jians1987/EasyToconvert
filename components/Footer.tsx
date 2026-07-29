@@ -105,8 +105,6 @@ export default function Footer() {
             <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-200 mb-4">Platform</h4>
             <ul className="space-y-2 text-xs">
               <li><Link href="/about" className="text-slate-500 dark:text-slate-400 hover:text-primary transition-all">About Us</Link></li>
-              <li><Link href="/api-docs" className="text-slate-500 dark:text-slate-400 hover:text-primary transition-all">API Documentation</Link></li>
-              <li><Link href="/blog" className="text-slate-500 dark:text-slate-400 hover:text-primary transition-all">Blog</Link></li>
               <li><Link href="/contact" className="text-slate-500 dark:text-slate-400 hover:text-primary transition-all">Contact</Link></li>
             </ul>
           </div>
