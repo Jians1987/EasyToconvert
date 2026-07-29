@@ -191,20 +191,186 @@ async function renderPdfJsPageToCanvas(
   return canvas;
 }
 
-/** Convert raw OCR text to Word paragraphs (split on blank lines). */
-function rawTextToParagraphs(text: string, _pageNum?: number): Paragraph[] {
-  return text
-    .split(/\n{2,}/)
-    .map((t) => t.replace(/\n/g, " ").trim())
-    .filter((t) => t.length > 2)
-    .map(
-      (t) =>
+/** Convert raw Unlimited OCR Markdown output into structured Word elements (Headings, Tables, Lists, Formatting). */
+function rawTextToParagraphs(text: string, _pageNum?: number): Array<Paragraph | Table> {
+  return parseMarkdownToDocxElements(text);
+}
+
+function parseMarkdownToDocxElements(markdown: string): Array<Paragraph | Table> {
+  const lines = markdown.split("\n");
+  const elements: Array<Paragraph | Table> = [];
+  let tableLines: string[] = [];
+
+  const flushTable = () => {
+    if (tableLines.length > 0) {
+      const table = parseMarkdownTable(tableLines);
+      if (table) elements.push(table);
+      tableLines = [];
+    }
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+
+    // Check for Markdown table row
+    if (line.startsWith("|") && line.endsWith("|")) {
+      tableLines.push(line);
+      continue;
+    } else {
+      flushTable();
+    }
+
+    if (!line) continue;
+
+    // Headings (# Heading 1, ## Heading 2, ### Heading 3)
+    if (line.startsWith("# ")) {
+      elements.push(
         new Paragraph({
-          children: [new TextRun({ text: t, font: "Calibri", size: 24 })],
-          spacing: { after: convertInchesToTwip(0.12) },
-          alignment: AlignmentType.JUSTIFIED,
+          heading: HeadingLevel.HEADING_1,
+          children: parseInlineFormatting(line.slice(2)),
+          spacing: { before: convertInchesToTwip(0.2), after: convertInchesToTwip(0.1) },
         })
+      );
+      continue;
+    }
+    if (line.startsWith("## ")) {
+      elements.push(
+        new Paragraph({
+          heading: HeadingLevel.HEADING_2,
+          children: parseInlineFormatting(line.slice(3)),
+          spacing: { before: convertInchesToTwip(0.15), after: convertInchesToTwip(0.08) },
+        })
+      );
+      continue;
+    }
+    if (line.startsWith("### ")) {
+      elements.push(
+        new Paragraph({
+          heading: HeadingLevel.HEADING_3,
+          children: parseInlineFormatting(line.slice(4)),
+          spacing: { before: convertInchesToTwip(0.12), after: convertInchesToTwip(0.06) },
+        })
+      );
+      continue;
+    }
+
+    // Bullet / Numbered list items (- item, * item, 1. item)
+    const listMatch = line.match(/^([-*+]\s+|\d+\.\s+)(.*)/);
+    if (listMatch) {
+      const prefix = listMatch[1];
+      const content = listMatch[2];
+      elements.push(
+        new Paragraph({
+          children: [
+            new TextRun({ text: prefix.includes(".") ? prefix + " " : "• ", bold: true, font: "Calibri", size: 23 }),
+            ...parseInlineFormatting(content),
+          ],
+          indent: { left: convertInchesToTwip(0.3) },
+          spacing: { after: convertInchesToTwip(0.08) },
+        })
+      );
+      continue;
+    }
+
+    // Standard paragraph with inline bold/italic/code parsing
+    elements.push(
+      new Paragraph({
+        children: parseInlineFormatting(line),
+        spacing: { after: convertInchesToTwip(0.12), line: 276 },
+        alignment: AlignmentType.LEFT,
+      })
     );
+  }
+
+  flushTable();
+  return elements;
+}
+
+function parseInlineFormatting(text: string): TextRun[] {
+  const runs: TextRun[] = [];
+  const regex = /(\*\*.*?\*\*|\*.*?\*|`.*?`|[^*`]+)/g;
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    const chunk = match[0];
+    if (chunk.startsWith("**") && chunk.endsWith("**") && chunk.length > 4) {
+      runs.push(new TextRun({ text: chunk.slice(2, -2), bold: true, font: "Calibri", size: 23 }));
+    } else if (chunk.startsWith("*") && chunk.endsWith("*") && chunk.length > 2) {
+      runs.push(new TextRun({ text: chunk.slice(1, -1), italics: true, font: "Calibri", size: 23 }));
+    } else if (chunk.startsWith("`") && chunk.endsWith("`") && chunk.length > 2) {
+      runs.push(new TextRun({ text: chunk.slice(1, -1), font: "Consolas", size: 20, color: "1E293B" }));
+    } else {
+      runs.push(new TextRun({ text: chunk, font: "Calibri", size: 23 }));
+    }
+  }
+  return runs.length > 0 ? runs : [new TextRun({ text, font: "Calibri", size: 23 })];
+}
+
+function parseMarkdownTable(tableLines: string[]): Table | null {
+  const rowsData: string[][] = [];
+  for (const line of tableLines) {
+    // Skip separator lines (|---|---|)
+    if (/^\|[\s\-:|]+\|$/.test(line)) continue;
+    const cells = line
+      .split("|")
+      .slice(1, -1)
+      .map((c) => c.trim());
+    if (cells.length > 0) rowsData.push(cells);
+  }
+  if (rowsData.length === 0) return null;
+
+  const maxCols = Math.max(...rowsData.map((r) => r.length));
+
+  const tableRows = rowsData.map((row, rowIndex) => {
+    const isHeader = rowIndex === 0;
+    const cells = row.map((cellText) => {
+      return new TableCell({
+        children: [
+          new Paragraph({
+            children: parseInlineFormatting(cellText),
+            spacing: { before: convertInchesToTwip(0.04), after: convertInchesToTwip(0.04) },
+          }),
+        ],
+        shading: isHeader
+          ? { fill: "F1F5F9", type: ShadingType.SOLID, color: "auto" }
+          : rowIndex % 2 === 1
+          ? { fill: "F8FAFC", type: ShadingType.SOLID, color: "auto" }
+          : undefined,
+        margins: {
+          top: convertInchesToTwip(0.06),
+          bottom: convertInchesToTwip(0.06),
+          left: convertInchesToTwip(0.1),
+          right: convertInchesToTwip(0.1),
+        },
+        borders: {
+          top: { style: BorderStyle.SINGLE, size: 4, color: "CBD5E1" },
+          bottom: { style: BorderStyle.SINGLE, size: 4, color: "CBD5E1" },
+          left: { style: BorderStyle.SINGLE, size: 4, color: "CBD5E1" },
+          right: { style: BorderStyle.SINGLE, size: 4, color: "CBD5E1" },
+        },
+      });
+    });
+
+    while (cells.length < maxCols) {
+      cells.push(
+        new TableCell({
+          children: [new Paragraph({ children: [] })],
+          borders: {
+            top: { style: BorderStyle.SINGLE, size: 4, color: "CBD5E1" },
+            bottom: { style: BorderStyle.SINGLE, size: 4, color: "CBD5E1" },
+            left: { style: BorderStyle.SINGLE, size: 4, color: "CBD5E1" },
+            right: { style: BorderStyle.SINGLE, size: 4, color: "CBD5E1" },
+          },
+        })
+      );
+    }
+
+    return new TableRow({ children: cells, tableHeader: isHeader });
+  });
+
+  return new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: tableRows,
+  });
 }
 
 // ── Embedded-text helpers ────────────────────────────────────────────────────

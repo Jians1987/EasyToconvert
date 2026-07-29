@@ -906,33 +906,11 @@ export function PdfPageClient() {
 
         if (docFidelity === "image") {
           blob = await runBrowserEngine(`Rendering exact-layout image (${imgScale}× quality)…`);
-
-        } else if (isScannedPdf && ocrEnabled) {
-          try {
-            setTatrProgressLabel("Scanned PDF detected · Engine 1/2: Adobe OCR (cloud)…");
-            setTatrProgressPct(10);
-            blob = await convertPdfToDocxWithAdobe(file, inputPassword || undefined);
-            setTatrProgressLabel("Conversion complete (Adobe OCR)");
-            setTatrProgressPct(100);
-          } catch (adobeErr) {
-            console.warn("Adobe OCR unavailable, using Unlimited OCR:", adobeErr);
-            blob = await runBrowserEngine("Scanned PDF · Baidu Unlimited OCR…");
-          }
-
         } else {
-          try {
-            setTatrProgressLabel("Engine 1/2: Adobe PDF Services (cloud)…");
-            setTatrProgressPct(10);
-            blob = await convertPdfToDocxWithAdobe(file, inputPassword || undefined);
-            setTatrProgressLabel("Conversion complete (Adobe PDF Services)");
-            setTatrProgressPct(100);
-          } catch (adobeErr) {
-            console.warn("Adobe PDF Services unavailable, using browser engine:", adobeErr);
-            const modeLabel = docFidelity === "text"
-              ? "plain text"
-              : `structured text${ocrEnabled ? " + Unlimited OCR" : ""}`;
-            blob = await runBrowserEngine(`Engine 2/2: Browser (${modeLabel})…`);
-          }
+          const modeLabel = docFidelity === "text"
+            ? "plain text"
+            : `Structured (Editable)${ocrEnabled ? " + Unlimited OCR" : ""}`;
+          blob = await runBrowserEngine(`Structuring document (${modeLabel})…`);
         }
 
         const url = URL.createObjectURL(blob!);
