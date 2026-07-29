@@ -78,9 +78,16 @@ export async function ocrImageWithUnlimitedOcr(
   });
 
   if (!res.ok) {
-    const errText = await res.text();
-    console.error("Unlimited OCR proxy failed:", errText);
-    throw new Error(`Unlimited OCR API Error: ${res.status}`);
+    let errMsg = `Unlimited OCR Error (${res.status})`;
+    try {
+      const errJson = await res.json();
+      if (errJson.error) errMsg = errJson.error;
+    } catch {
+      const errText = await res.text().catch(() => "");
+      if (errText) errMsg = errText;
+    }
+    console.error("Unlimited OCR proxy failed:", errMsg);
+    throw new Error(errMsg);
   }
 
   const data = await res.json();

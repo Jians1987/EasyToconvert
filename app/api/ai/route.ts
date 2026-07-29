@@ -120,10 +120,20 @@ export async function POST(req: Request) {
         console.error("Unlimited-OCR endpoint unreachable:", err);
         return NextResponse.json(
           {
-            error: `Unlimited-OCR server unreachable at ${serverUrl}. Ensure SGLang or vLLM inference server is running.`,
+            error: `Unlimited-OCR server is not running at ${serverUrl}. Please start the model server: python infer.py --model_dir baidu/Unlimited-OCR --gpu 0`,
           },
           { status: 503 }
         );
+      }
+    }
+
+    if (action === "unlimited-ocr-status") {
+      const serverUrl = process.env.UNLIMITED_OCR_SERVER_URL || "http://127.0.0.1:10000";
+      try {
+        const res = await fetch(`${serverUrl}/health`, { method: "GET", signal: AbortSignal.timeout(3000) });
+        return NextResponse.json({ online: res.ok, status: res.status, serverUrl });
+      } catch {
+        return NextResponse.json({ online: false, status: 503, serverUrl });
       }
     }
 

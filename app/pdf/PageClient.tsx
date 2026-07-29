@@ -1454,9 +1454,17 @@ export function PdfPageClient() {
                         <p className="text-[10px] text-slate-500 leading-relaxed">
                           Pages with no embedded text are automatically parsed using <strong>Baidu Unlimited-OCR</strong> for state-of-the-art structural Markdown, LaTeX formulas, and table detection.
                         </p>
-                        <div className="p-2.5 rounded-xl border border-emerald-500/30 bg-emerald-50/50 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-300 text-[11px] font-medium flex items-center gap-2">
-                          <Sparkles className="w-4 h-4 text-emerald-500 shrink-0" />
-                          <span>Engine: Baidu Unlimited-OCR (One-Shot Long-Horizon Visual Parsing)</span>
+                        <div className="p-2.5 rounded-xl border border-emerald-500/30 bg-emerald-50/50 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-300 text-[11px] font-medium space-y-1">
+                          <div className="flex items-center gap-1.5 font-semibold">
+                            <Sparkles className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                            <span>Engine: Baidu Unlimited-OCR (`http://127.0.0.1:10000`)</span>
+                          </div>
+                          <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                            If you encounter error 503, run the local server command:
+                          </p>
+                          <code className="block text-[10px] font-mono bg-white/80 dark:bg-slate-900/80 p-1.5 rounded border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 select-all">
+                            python infer.py --model_dir baidu/Unlimited-OCR --gpu 0
+                          </code>
                         </div>
                       </div>
                     )}
