@@ -40,7 +40,20 @@ function postJsonNative(
               reject(new Error(`Invalid JSON response: ${data.slice(0, 200)}`));
             }
           } else {
-            reject(new Error(`Unlimited-OCR Server Error (${res.statusCode}): ${data.slice(0, 300)}`));
+            // Surface the server's own error message when it sends a JSON body
+            // like {"error": "..."} instead of dumping the raw payload.
+            let serverMsg = data.slice(0, 300);
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed && typeof parsed.error === "string" && parsed.error.trim()) {
+                serverMsg = parsed.error.trim();
+              }
+            } catch {
+              /* body wasn't JSON — keep the raw slice */
+            }
+            const httpErr = new Error(serverMsg) as Error & { statusCode?: number };
+            httpErr.statusCode = res.statusCode;
+            reject(httpErr);
           }
         });
       }
@@ -165,11 +178,32 @@ export async function POST(req: Request) {
       } catch (err: unknown) {
         console.error("Unlimited-OCR endpoint fetch failed:", err);
         const detail = err instanceof Error ? err.message : String(err);
+        const code = (err as { code?: string })?.code || "";
+        const statusCode = (err as { statusCode?: number })?.statusCode;
+
+        // Case 1: the server never answered — not running / wrong URL / still loading the model.
+        const unreachable =
+          statusCode === undefined &&
+          (code === "ECONNREFUSED" ||
+            code === "ECONNRESET" ||
+            code === "ENOTFOUND" ||
+            /ECONNREFUSED|ECONNRESET|ENOTFOUND|timed out/i.test(detail));
+
+        if (unreachable) {
+          return NextResponse.json(
+            {
+              error: `Can't reach the Unlimited-OCR server at ${serverUrl}. Start it with start_server.bat (or python server.py) and wait until it finishes loading the model, then try again. (${detail})`,
+            },
+            { status: 503 }
+          );
+        }
+
+        // Case 2: the server answered but failed to process the page — show its real error.
         return NextResponse.json(
           {
-            error: `Unlimited-OCR server request failed (${detail}). Ensure python server.py (or start_server.bat) is running on ${serverUrl}.`,
+            error: `Unlimited-OCR couldn't process this page: ${detail}`,
           },
-          { status: 503 }
+          { status: 502 }
         );
       }
     }
