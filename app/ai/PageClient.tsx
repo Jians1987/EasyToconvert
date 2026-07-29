@@ -93,7 +93,19 @@ const loadPdfJs = (): Promise<any> => {
   });
 };
 
-async function callDeepSeekAPI(prompt: string, systemPrompt?: string) {
+type AiChatResponse = { content: string; reasoning?: string; provider?: string; model?: string };
+
+function aiEngineLabel(res: AiChatResponse) {
+  if (!res.provider) return "AI";
+  return res.model ? `${res.provider} (${res.model})` : res.provider;
+}
+
+/**
+ * Calls the /api/ai proxy, which picks whichever chat provider is configured
+ * server-side (Groq first, NVIDIA/DeepSeek as fallback). The response carries
+ * the provider that actually answered so the output header stays truthful.
+ */
+async function callAiChat(prompt: string, systemPrompt?: string): Promise<AiChatResponse> {
   const res = await fetch("/api/ai", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -105,9 +117,22 @@ async function callDeepSeekAPI(prompt: string, systemPrompt?: string) {
   });
   
   if (!res.ok) {
-    throw new Error(`DeepSeek API Error: ${res.status} ${await res.text()}`);
+    // Surface the route's own {"error": "..."} message instead of dumping raw
+    // JSON into the results panel.
+    let message = `Request failed (${res.status})`;
+    try {
+      const body = await res.json();
+      if (body?.error) message = String(body.error);
+    } catch {
+      const text = await res.text().catch(() => "");
+      if (text) message = text;
+    }
+    if (res.status === 503) {
+      message = `${message}. Set GROQ_API_KEY (or NVIDIA_DEEPSEEK_API_KEY) in .env.local and restart the dev server.`;
+    }
+    throw new Error(message);
   }
-  
+
   return await res.json();
 }
 
@@ -212,13 +237,13 @@ export function AiPageClient() {
           ? `\n\n**${ocrPagesUsed} scanned page${ocrPagesUsed > 1 ? "s were" : " was"} read with Baidu Unlimited-OCR.**`
           : "";
         
-        setOcrStatus("DeepSeek is thinking (reading document)...");
-        const aiResponse = await callDeepSeekAPI(
+        setOcrStatus("AI is thinking (reading document)...");
+        const aiResponse = await callAiChat(
           extractedText.substring(0, 40000), // Limit length to avoid max tokens
           "You are an expert document summarizer. Extract the key points, main takeaways, and a concise summary of the provided text."
         );
 
-        result = `### 📝 DeepSeek Document Summary\n\n**File**: ${selectedFile.name}\n**Pages**: ${numPages}\n**Size**: ${(selectedFile.size / 1024).toFixed(1)} KB${ocrNote}\n\n---\n\n${aiResponse.content}`;
+        result = `### 📝 AI Document Summary\n\n**File**: ${selectedFile.name}\n**Pages**: ${numPages}\n**Size**: ${(selectedFile.size / 1024).toFixed(1)} KB\n**Engine**: ${aiEngineLabel(aiResponse)}${ocrNote}\n\n---\n\n${aiResponse.content}`;
 
       } else if (mode === "ocr") {
         if (!selectedFile) {
@@ -242,15 +267,15 @@ export function AiPageClient() {
         const lines = inputText.split("\n");
         const lineCount = lines.length;
         
-        setOcrStatus("DeepSeek is analyzing the code...");
-        const aiResponse = await callDeepSeekAPI(
+        setOcrStatus("AI is analyzing the code...");
+        const aiResponse = await callAiChat(
           inputText.substring(0, 20000),
           "You are an expert senior software engineer. Explain the provided code clearly, concisely, and identify any potential edge cases or bugs."
         );
 
         let numberedCode = lines.map((line, i) => `  ${(i + 1).toString().padStart(3, " ")} | ${line}`).join("\n");
 
-        result = `### 🧠 DeepSeek Code Analysis\n\n**Statistics:**\n* **Total Lines**: ${lineCount}\n\n---\n\n${aiResponse.content}\n\n---\n\n**Source Code:**\n\n\`\`\`\n${numberedCode}\n\`\`\``;
+        result = `### 🧠 AI Code Analysis\n\n**Statistics:**\n* **Total Lines**: ${lineCount}\n* **Engine**: ${aiEngineLabel(aiResponse)}\n\n---\n\n${aiResponse.content}\n\n---\n\n**Source Code:**\n\n\`\`\`\n${numberedCode}\n\`\`\``;
 
       } else if (mode === "translate") {
         if (!inputText.trim()) {
@@ -259,13 +284,13 @@ export function AiPageClient() {
           return;
         }
 
-        setOcrStatus(`DeepSeek is translating to ${targetLang}...`);
-        const aiResponse = await callDeepSeekAPI(
+        setOcrStatus(`AI is translating to ${targetLang}...`);
+        const aiResponse = await callAiChat(
           inputText.substring(0, 10000),
           `You are an expert translator. Translate the user's text into ${targetLang}. Maintain the original tone and formatting exactly. Only output the translated text and nothing else.`
         );
 
-        result = `### 🌐 DeepSeek Translation\n\n**Target Language**: ${targetLang}\n**Input Length**: ${inputText.length} characters\n\n---\n\n${aiResponse.content}`;
+        result = `### 🌐 AI Translation\n\n**Target Language**: ${targetLang}\n**Input Length**: ${inputText.length} characters\n**Engine**: ${aiEngineLabel(aiResponse)}\n\n---\n\n${aiResponse.content}`;
       }
 
       setOutputText(result);

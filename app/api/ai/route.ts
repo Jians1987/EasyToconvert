@@ -74,6 +74,59 @@ const MAX_IMAGE_BASE64_LENGTH = 35_000_000;
 const MAX_PROMPT_LENGTH = 50_000;
 const MAX_SYSTEM_PROMPT_LENGTH = 4_000;
 
+/**
+ * Chat providers for the AI productivity tools (summarizer, code explainer,
+ * translator). Both speak the OpenAI `/chat/completions` shape, so switching is
+ * a matter of base URL + model + key.
+ *
+ * Order: whichever key is present wins; when both are set, Groq goes first
+ * (free tier, much faster) and NVIDIA is used as automatic fallback on rate
+ * limits or provider outages. Pin the order with AI_PROVIDER=groq|nvidia.
+ */
+type ChatProvider = {
+  id: "groq" | "nvidia";
+  label: string;
+  url: string;
+  apiKey: string;
+  model: string;
+  /** Provider-specific fields merged into the request body. */
+  extraBody?: Record<string, unknown>;
+};
+
+function resolveChatProviders(): ChatProvider[] {
+  const providers: ChatProvider[] = [];
+
+  const groqKey = process.env.GROQ_API_KEY;
+  if (groqKey) {
+    const base = (process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1").replace(/\/+$/, "");
+    providers.push({
+      id: "groq",
+      label: "Groq",
+      url: `${base}/chat/completions`,
+      apiKey: groqKey,
+      model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+    });
+  }
+
+  const nvidiaKey = process.env.NVIDIA_DEEPSEEK_API_KEY;
+  if (nvidiaKey) {
+    providers.push({
+      id: "nvidia",
+      label: "DeepSeek",
+      url: "https://integrate.api.nvidia.com/v1/chat/completions",
+      apiKey: nvidiaKey,
+      model: process.env.NVIDIA_DEEPSEEK_MODEL || "deepseek-ai/deepseek-v4-flash",
+      extraBody: { extra_body: { chat_template_kwargs: { thinking: true, reasoning_effort: "high" } } },
+    });
+  }
+
+  const preferred = process.env.AI_PROVIDER?.trim().toLowerCase();
+  if (preferred) {
+    providers.sort((a, b) => Number(b.id === preferred) - Number(a.id === preferred));
+  }
+  return providers;
+}
+
 export const maxDuration = 120;
 
 export async function POST(req: Request) {
@@ -232,8 +285,8 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "System prompt is too large" }, { status: 413 });
       }
 
-      const apiKey = process.env.NVIDIA_DEEPSEEK_API_KEY;
-      if (!apiKey) {
+      const providers = resolveChatProviders();
+      if (providers.length === 0) {
         return NextResponse.json({ error: "AI tools are not configured" }, { status: 503 });
       }
 
@@ -241,34 +294,59 @@ export async function POST(req: Request) {
       if (typeof systemPrompt === "string" && systemPrompt) messages.push({ role: "system", content: systemPrompt });
       messages.push({ role: "user", content: prompt });
 
-      const res = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-          Accept: "application/json",
-        },
-        body: JSON.stringify({
-          model: "deepseek-ai/deepseek-v4-flash",
-          messages,
-          temperature: 0.7,
-          top_p: 0.95,
-          max_tokens: 4000,
-          extra_body: { chat_template_kwargs: { thinking: true, reasoning_effort: "high" } },
-          stream: false,
-        }),
-      });
+      let lastError = "AI provider request failed";
+      for (const provider of providers) {
+        let res: Response;
+        try {
+          res = await fetch(provider.url, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${provider.apiKey}`,
+              Accept: "application/json",
+            },
+            body: JSON.stringify({
+              model: provider.model,
+              messages,
+              temperature: 0.7,
+              top_p: 0.95,
+              max_tokens: 4000,
+              stream: false,
+              ...provider.extraBody,
+            }),
+          });
+        } catch (err) {
+          lastError = `${provider.label} is unreachable`;
+          continue; // network failure — try the next provider
+        }
 
-      if (!res.ok) {
-        return NextResponse.json({ error: `AI provider request failed (${res.status})` }, { status: 502 });
+        if (!res.ok) {
+          // Providers return {"error": {"message": "..."}}; surface it so a bad
+          // key or a decommissioned model name is obvious instead of a bare 502.
+          let detail = "";
+          try {
+            const errBody = await res.json();
+            detail = String(errBody?.error?.message ?? errBody?.error ?? "").trim();
+          } catch {
+            /* non-JSON error body — the status code is all we have */
+          }
+          lastError = detail
+            ? `${provider.label} request failed (${res.status}): ${detail}`
+            : `${provider.label} request failed (${res.status})`;
+          continue; // rate-limited or erroring — fall back to the next provider
+        }
+
+        const data = await res.json();
+        const message = data.choices?.[0]?.message ?? {};
+        return NextResponse.json({
+          content: String(message.content ?? "").trim(),
+          reasoning: String(message.reasoning ?? message.reasoning_content ?? "").trim(),
+          provider: provider.label,
+          model: provider.model,
+        });
       }
 
-      const data = await res.json();
-      const message = data.choices?.[0]?.message ?? {};
-      return NextResponse.json({
-        content: String(message.content ?? "").trim(),
-        reasoning: String(message.reasoning ?? message.reasoning_content ?? "").trim(),
-      });
+      return NextResponse.json({ error: lastError }, { status: 502 });
     }
 
     return NextResponse.json({ error: "Invalid action" }, { status: 400 });
