@@ -84,27 +84,38 @@ export async function POST(req: Request) {
           headers["Authorization"] = `Bearer ${apiKey}`;
         }
 
-        const res = await fetch(`${serverUrl}/v1/chat/completions`, {
-          method: "POST",
-          headers,
-          signal: AbortSignal.timeout(120_000),
-          body: JSON.stringify({
-            model: "Unlimited-OCR",
-            messages: [
-              {
-                role: "user",
-                content: [
-                  { type: "text", text: "<image>document parsing." },
-                  { type: "image_url", image_url: { url: `data:image/png;base64,${imageBase64}` } },
+        let res: Response | null = null;
+        let lastErr: unknown = null;
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          try {
+            res = await fetch(`${serverUrl}/v1/chat/completions`, {
+              method: "POST",
+              headers,
+              signal: AbortSignal.timeout(120_000),
+              body: JSON.stringify({
+                model: "Unlimited-OCR",
+                messages: [
+                  {
+                    role: "user",
+                    content: [
+                      { type: "text", text: "<image>document parsing." },
+                      { type: "image_url", image_url: { url: `data:image/png;base64,${imageBase64}` } },
+                    ],
+                  },
                 ],
-              },
-            ],
-            temperature: 0,
-            skip_special_tokens: false,
-            stream: false,
-            images_config: { image_mode: "gundam" },
-          }),
-        });
+                temperature: 0,
+                skip_special_tokens: false,
+                stream: false,
+                images_config: { image_mode: "gundam" },
+              }),
+            });
+            if (res) break;
+          } catch (e) {
+            lastErr = e;
+            if (attempt < 2) await new Promise((r) => setTimeout(r, 500));
+          }
+        }
+        if (!res) throw lastErr;
 
         if (!res.ok) {
           const errText = await res.text();
