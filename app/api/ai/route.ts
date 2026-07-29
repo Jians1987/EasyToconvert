@@ -4,7 +4,7 @@ const MAX_IMAGE_BASE64_LENGTH = 35_000_000;
 const MAX_PROMPT_LENGTH = 50_000;
 const MAX_SYSTEM_PROMPT_LENGTH = 4_000;
 
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 export async function POST(req: Request) {
   try {
@@ -87,6 +87,7 @@ export async function POST(req: Request) {
         const res = await fetch(`${serverUrl}/v1/chat/completions`, {
           method: "POST",
           headers,
+          signal: AbortSignal.timeout(120_000),
           body: JSON.stringify({
             model: "Unlimited-OCR",
             messages: [
@@ -117,10 +118,11 @@ export async function POST(req: Request) {
         const text = data.choices?.[0]?.message?.content ?? "";
         return NextResponse.json({ text: String(text).trim() });
       } catch (err: unknown) {
-        console.error("Unlimited-OCR endpoint unreachable:", err);
+        console.error("Unlimited-OCR endpoint fetch failed:", err);
+        const detail = err instanceof Error ? err.message : String(err);
         return NextResponse.json(
           {
-            error: `Unlimited-OCR server is not running at ${serverUrl}. Please run: python server.py in Desktop\\UnlimitedOCR`,
+            error: `Unlimited-OCR server request failed (${detail}). Ensure python server.py (or start_server.bat) is running on ${serverUrl}.`,
           },
           { status: 503 }
         );
