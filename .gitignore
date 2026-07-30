@@ -24,6 +24,10 @@ yarn-error.log*
 
 # local env files
 .env*.local
+# ...and any copy of one. `.env*.local` does not match `.env.local.bak`,
+# so a stray backup would otherwise show up as an untracked secrets file.
+.env*.local.*
+.env.local.bak
 
 # vercel
 .vercel
