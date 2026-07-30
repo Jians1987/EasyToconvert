@@ -147,24 +147,51 @@ test.describe("Home", () => {
 
 // ───────────── Contact form ─────────────
 test.describe("Contact", () => {
-  // The form has no backend; it must hand off to the visitor's mail client
-  // rather than swallow the message behind a fake success screen.
-  test("submitting composes a mailto: instead of faking a success state", async ({ page }) => {
-    const pageErrors: string[] = [];
-    page.on("pageerror", (e) => pageErrors.push(e.message));
-    await page.goto("/contact");
-
+  async function fillForm(page: import("@playwright/test").Page) {
     await page.getByPlaceholder("Jane Doe").fill("Test User");
     await page.getByPlaceholder("jane@company.com").fill("test@example.com");
     await page.getByPlaceholder("How can we help?").fill("This is a test message.");
-    await page.getByRole("button", { name: /Compose Email/i }).click();
+  }
 
-    // The old form showed a success screen while discarding the message.
-    await expect(page.getByText(/Message Received/i)).toHaveCount(0);
-    expect(pageErrors).toEqual([]);
+  test("posts the message to /api/contact and confirms only on success", async ({ page }) => {
+    await page.goto("/contact");
 
-    const mailto = page.locator('a[href^="mailto:"]').first();
-    await expect(mailto).toHaveAttribute("href", /support@easytoconvert\.in/);
+    let posted: any = null;
+    await page.route("**/api/contact", async (route) => {
+      posted = route.request().postDataJSON();
+      await route.fulfill({ status: 200, contentType: "application/json", body: '{"ok":true}' });
+    });
+
+    await fillForm(page);
+    await page.getByRole("button", { name: /Send Message/i }).click();
+
+    await expect(page.getByText(/Message sent/i)).toBeVisible();
+    expect(posted).toMatchObject({
+      name: "Test User",
+      email: "test@example.com",
+      message: "This is a test message.",
+    });
+  });
+
+  // The whole point of replacing the old form: a failed send must say so
+  // rather than show a success screen and drop the message.
+  test("a failed send surfaces the error and keeps the form", async ({ page }) => {
+    await page.goto("/contact");
+
+    await page.route("**/api/contact", (route) =>
+      route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: '{"error":"The contact form is not configured right now."}',
+      })
+    );
+
+    await fillForm(page);
+    await page.getByRole("button", { name: /Send Message/i }).click();
+
+    await expect(page.getByText(/not configured right now/i)).toBeVisible();
+    await expect(page.getByText(/Message sent/i)).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /Send Message/i })).toBeVisible();
   });
 });
 

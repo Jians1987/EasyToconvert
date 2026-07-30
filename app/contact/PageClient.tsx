@@ -1,21 +1,46 @@
 "use client";
 
 import React, { useState } from "react";
-import { Mail, Github, Bug, Send } from "lucide-react";
+import { Mail, Github, Bug, Send, CheckCircle, AlertTriangle, Loader2 } from "lucide-react";
 
 const SUPPORT_EMAIL = "support@easytoconvert.in";
 const REPO_URL = "https://github.com/Jians1987/EasyToconvert";
 
-export function ContactPageClient() {
-  const [formData, setFormData] = useState({ name: "", email: "", message: "" });
+type SendState = "idle" | "sending" | "sent";
 
-  // No mailbox server behind this form — it hands the message to the visitor's
-  // own mail client so nothing is silently dropped.
-  const handleSubmit = (e: React.FormEvent) => {
+export function ContactPageClient() {
+  const [formData, setFormData] = useState({ name: "", email: "", message: "", website: "" });
+  const [state, setState] = useState<SendState>("idle");
+  const [error, setError] = useState("");
+
+  // Posts to /api/contact, which relays over SMTP. Success is only ever shown
+  // after the server confirms the send — a failure must say so, not pretend.
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const subject = encodeURIComponent(`EasyToConvert feedback from ${formData.name || "a visitor"}`);
-    const body = encodeURIComponent(`${formData.message}\n\n— ${formData.name}\nReply to: ${formData.email}`);
-    window.location.href = `mailto:${SUPPORT_EMAIL}?subject=${subject}&body=${body}`;
+    setState("sending");
+    setError("");
+
+    try {
+      const res = await fetch("/api/contact", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(formData),
+      });
+
+      const payload = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        setError(payload?.error || "We couldn't send your message. Please email us directly instead.");
+        setState("idle");
+        return;
+      }
+
+      setFormData({ name: "", email: "", message: "", website: "" });
+      setState("sent");
+    } catch {
+      setError("Network error — check your connection, or email us directly.");
+      setState("idle");
+    }
   };
 
   return (
@@ -72,7 +97,37 @@ export function ContactPageClient() {
 
         {/* Message Form */}
         <div className="md:col-span-2 glass-card p-6">
-          <form onSubmit={handleSubmit} className="space-y-4">
+          {state === "sent" ? (
+            <div className="h-full flex flex-col items-center justify-center text-center space-y-4 py-8">
+              <CheckCircle className="w-12 h-12 text-emerald-500" />
+              <div className="space-y-1">
+                <h3 className="font-bold text-slate-800 dark:text-slate-100">Message sent</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 max-w-xs mx-auto leading-relaxed">
+                  It landed in our inbox and we&rsquo;ll reply to the address you gave.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setState("idle")}
+                className="text-xs font-semibold text-indigo-500 hover:underline"
+              >
+                Send another message
+              </button>
+            </div>
+          ) : (
+            <form onSubmit={handleSubmit} className="space-y-4">
+              {/* Honeypot — hidden from people, catches bots that fill every field */}
+              <input
+                type="text"
+                name="website"
+                tabIndex={-1}
+                autoComplete="off"
+                aria-hidden="true"
+                className="hidden"
+                value={formData.website}
+                onChange={(e) => setFormData({ ...formData, website: e.target.value })}
+              />
+
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase font-bold text-slate-400">Your Name</label>
@@ -110,22 +165,39 @@ export function ContactPageClient() {
                 />
               </div>
 
+              {error && (
+                <div className="p-3 rounded-lg border border-red-500/30 bg-red-50/60 dark:bg-red-950/20 flex items-start space-x-2">
+                  <AlertTriangle className="w-4 h-4 text-red-500 mt-0.5 shrink-0" />
+                  <p className="text-[11px] text-red-700 dark:text-red-400 leading-relaxed">{error}</p>
+                </div>
+              )}
+
               <button
                 type="submit"
-                className="w-full py-2.5 rounded-lg text-xs font-semibold bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg shadow-indigo-500/20 hover:opacity-90 transition-all flex items-center justify-center space-x-1.5"
+                disabled={state === "sending"}
+                className="w-full py-2.5 rounded-lg text-xs font-semibold bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg shadow-indigo-500/20 hover:opacity-90 transition-all flex items-center justify-center space-x-1.5 disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                <Send className="w-3.5 h-3.5" />
-                <span>Compose Email</span>
+                {state === "sending" ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Sending…</span>
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-3.5 h-3.5" />
+                    <span>Send Message</span>
+                  </>
+                )}
               </button>
 
               <p className="text-[10px] text-slate-400 text-center leading-relaxed">
-                This opens your own email app with the message ready to send — nothing is submitted to a server
-                from this page. Prefer to write it yourself?{" "}
+                Goes straight to our inbox. Prefer your own mail app?{" "}
                 <a href={`mailto:${SUPPORT_EMAIL}`} className="text-indigo-500 hover:underline font-semibold">
                   {SUPPORT_EMAIL}
                 </a>
               </p>
             </form>
+          )}
         </div>
       </div>
     </div>
