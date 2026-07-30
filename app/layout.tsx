@@ -91,9 +91,6 @@ export const metadata: Metadata = {
     apple: "/apple-touch-icon.png",
   },
   manifest: "/manifest.json",
-  verification: {
-    google: "google-site-verification-placeholder",
-  },
 };
 
 export const viewport: Viewport = {
@@ -164,9 +161,10 @@ const websiteJsonLd = {
         "JSON / CSV / XML data formatting tools",
         "QR code generator, Base64 encoder, Hash generator",
         "CSS minifier, Box-shadow generator",
-        "AI-powered PDF summarizer and OCR",
+        "AI-powered PDF summarizer and OCR (opt-in, server-side)",
         "Video and audio compression via FFmpeg.wasm",
-        "All processing done locally in the browser",
+        "PDF, image, data and developer tools run locally in the browser",
+        "Free to use with no account required",
       ],
     },
   ],

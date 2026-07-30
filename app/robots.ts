@@ -6,7 +6,7 @@ export default function robots(): MetadataRoute.Robots {
       {
         userAgent: "*",
         allow: "/",
-        disallow: ["/api/", "/_next/", "/dashboard"],
+        disallow: ["/api/", "/_next/", "/dashboard", "/mobil"],
       },
     ],
     sitemap: "https://www.easytoconvert.in/sitemap.xml",

@@ -13,9 +13,7 @@ import {
   ChevronRight,
   Shield,
   Zap,
-  Users,
-  Search,
-  Star
+  Search
 } from "lucide-react";
 
 export function HomeClient() {
@@ -72,7 +70,7 @@ export function HomeClient() {
       title: "AI Powerhouse",
       icon: Sparkles,
       color: "from-violet-500/20 to-fuchsia-500/20 text-violet-500 border-violet-500/30",
-      description: "Extract text from scanned PDFs and images with on-device OCR, summarize documents, explain code, and translate text.",
+      description: "Summarize documents, explain code, translate text, and pull text out of scanned pages. These tools call an AI service, so they're clearly marked and opt-in.",
       tools: ["AI Summarizer", "Image OCR", "AI Code Explainer", "Document Translator"],
       path: "/ai",
     },
@@ -212,104 +210,73 @@ export function HomeClient() {
         </div>
       </section>
 
-      {/* 3. Core Statistics */}
+      {/* 3. How it works — what actually happens to your files */}
       <section className="p-8 md:p-12 rounded-2xl border border-slate-200/60 dark:border-slate-800/80 bg-white/40 dark:bg-slate-900/10 backdrop-blur-md relative overflow-hidden">
         <div className="absolute top-1/2 left-1/3 -translate-x-1/2 -translate-y-1/2 w-64 h-64 bg-purple-500/10 dark:bg-purple-500/5 rounded-full blur-[70px] pointer-events-none -z-10" />
 
+        <div className="text-center space-y-2 mb-10">
+          <h2 className="text-2xl md:text-3xl font-extrabold text-slate-800 dark:text-slate-100">
+            How Your Files Are Handled
+          </h2>
+          <p className="text-sm text-slate-500 dark:text-slate-400 max-w-xl mx-auto">
+            Most tools here never send your file anywhere. The few that use cloud AI say so before you run them.
+          </p>
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8 text-center">
-          <div className="space-y-2">
-            <div className="p-3 rounded-full bg-indigo-500/10 text-indigo-500 w-fit mx-auto">
-              <Zap className="w-6 h-6" />
-            </div>
-            <h3 className="text-3xl font-extrabold text-slate-800 dark:text-slate-100">0.02s</h3>
-            <p className="text-xs text-slate-400">Average Local Render Latency</p>
-          </div>
           <div className="space-y-2">
             <div className="p-3 rounded-full bg-emerald-500/10 text-emerald-500 w-fit mx-auto">
               <Shield className="w-6 h-6" />
             </div>
-            <h3 className="text-3xl font-extrabold text-slate-800 dark:text-slate-100">100%</h3>
-            <p className="text-xs text-slate-400">Privacy &amp; Local Processing</p>
+            <h3 className="text-base font-extrabold text-slate-800 dark:text-slate-100">
+              Processed in your browser
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed max-w-xs mx-auto">
+              PDF, image, data and developer tools run on your own device using WebAssembly. Your file never
+              leaves the tab.
+            </p>
           </div>
           <div className="space-y-2">
-            <div className="p-3 rounded-full bg-purple-500/10 text-purple-500 w-fit mx-auto">
-              <Users className="w-6 h-6" />
+            <div className="p-3 rounded-full bg-indigo-500/10 text-indigo-500 w-fit mx-auto">
+              <Zap className="w-6 h-6" />
             </div>
-            <h3 className="text-3xl font-extrabold text-slate-800 dark:text-slate-100">5M+</h3>
-            <p className="text-xs text-slate-400">Mock Conversions Completed</p>
+            <h3 className="text-base font-extrabold text-slate-800 dark:text-slate-100">
+              No account, no watermarks
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed max-w-xs mx-auto">
+              Every tool is free and open to use immediately. No sign-up wall, no daily limits, nothing stamped
+              on your output.
+            </p>
+          </div>
+          <div className="space-y-2">
+            <div className="p-3 rounded-full bg-amber-500/10 text-amber-500 w-fit mx-auto">
+              <Sparkles className="w-6 h-6" />
+            </div>
+            <h3 className="text-base font-extrabold text-slate-800 dark:text-slate-100">
+              Cloud AI is opt-in
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed max-w-xs mx-auto">
+              Summarizing, translating and cloud OCR need a server. Those are labelled, off by default, and
+              always your choice.
+            </p>
           </div>
         </div>
       </section>
 
-      {/* 4. Testimonials */}
-      <section className="space-y-8">
-        <div className="text-center space-y-2">
-          <h2 className="text-2xl md:text-3xl font-extrabold text-slate-800 dark:text-slate-100">
-            Trusted by Builders Worldwide
-          </h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400">
-            See what digital creators and developers say about our responsive workspace.
-          </p>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {[
-            {
-              text: "Easytoconvert replaced five other web utility sites I had bookmarked. The JSON tree checker and JWT decoder work instantly client-side without any latency.",
-              author: "Sarah Chen",
-              role: "Full Stack Engineer",
-              avatar: "SC"
-            },
-            {
-              text: "The local image compressor is amazing. I can drop 20 screenshots and convert them to optimized WebP in bulk. It is extremely fast and privacy-focused.",
-              author: "Marcus Vance",
-              role: "Content Creator",
-              avatar: "MV"
-            },
-            {
-              text: "PDF merge and rotations work completely within my browser. There's no risk of sending sensitive contracts to a random server, which is crucial for my legal clients.",
-              author: "Helena Rostova",
-              role: "IT Security Audit",
-              avatar: "HR"
-            }
-          ].map((t, idx) => (
-            <div key={idx} className="glass-card p-6 space-y-4">
-              <div className="flex text-amber-400">
-                {[...Array(5)].map((_, i) => (
-                  <Star key={i} className="w-3.5 h-3.5 fill-amber-400" />
-                ))}
-              </div>
-              <p className="text-xs text-slate-600 dark:text-slate-300 italic leading-relaxed">
-                &ldquo;{t.text}&rdquo;
-              </p>
-              <div className="flex items-center space-x-2.5 pt-2">
-                <span className="w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center text-xs font-bold text-white">
-                  {t.avatar}
-                </span>
-                <div>
-                  <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">{t.author}</h4>
-                  <span className="text-[10px] text-slate-400">{t.role}</span>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* 5. CTA Section */}
+      {/* 4. CTA Section */}
       <section className="text-center py-12 rounded-3xl bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 text-white relative overflow-hidden shadow-2xl">
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-white/10 via-transparent to-transparent" />
         <div className="space-y-6 max-w-2xl mx-auto relative z-10 px-4">
-          <h2 className="text-3xl md:text-4xl font-extrabold">Ready to Boost Your Productivity?</h2>
+          <h2 className="text-3xl md:text-4xl font-extrabold">Pick a tool and go</h2>
           <p className="text-sm text-indigo-100 max-w-md mx-auto leading-relaxed">
-            Access every file utility and formatting module under a single, unified premium interface. Start free.
+            No account, no upload queue, no watermark. Drop a file in and it converts on your own machine.
           </p>
           <div className="flex flex-col sm:flex-row justify-center items-center gap-3 pt-2">
             <Link
-              href="/dashboard"
+              href="/pdf"
               className="px-6 py-3 rounded-xl bg-white text-indigo-600 font-semibold shadow-lg hover:bg-slate-50 transition-all w-full sm:w-auto"
             >
-              Go to Dashboard
+              Open PDF Tools
             </Link>
             <Link
               href="/developer"

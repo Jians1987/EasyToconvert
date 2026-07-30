@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { DataPageClient } from "./PageClient";
 
 export const metadata: Metadata = {
-  title: "Free Data Tools – JSON Beautifier, CSV to JSON, XML Formatter | EasyToConvert",
+  title: "Free Data Tools – JSON Beautifier, CSV to JSON, XML Formatter",
   description:
     "Format, validate, and convert JSON, CSV, and XML data online for free. Beautify messy JSON, convert CSV to JSON, minify data, and more.",
   keywords: [

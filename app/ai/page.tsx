@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { AiPageClient } from "./PageClient";
 
 export const metadata: Metadata = {
-  title: "Free AI Tools – PDF Summarizer, Image OCR, Code Explainer | EasyToConvert",
+  title: "Free AI Tools – PDF Summarizer, Image OCR, Code Explainer",
   description:
     "Extract text from images with OCR, summarize PDFs, explain code, and translate text — all powered by on-device AI in your browser.",
   keywords: [

@@ -2,7 +2,7 @@
 
 import React from "react";
 import Link from "next/link";
-import { Command, Heart, Globe, Shield, RefreshCw } from "lucide-react";
+import { Command, Heart, Shield, RefreshCw } from "lucide-react";
 
 export default function Footer() {
   return (
@@ -20,20 +20,18 @@ export default function Footer() {
               </span>
             </Link>
             <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm leading-relaxed">
-              Easytoconvert provides fast, secure, browser-based conversion, code styling, data transformations, and media optimization tools. All file conversions are processed locally or secure serverless modules for highest privacy.
+              Easytoconvert provides browser-based file conversion, code styling, data transformation, and media
+              optimization tools. PDF, image, data and developer tools run entirely on your device; the AI tools
+              call a server and are labelled wherever they appear.
             </p>
             <div className="flex space-x-4 pt-2">
               <div className="flex items-center space-x-1.5 text-xs text-slate-400">
-                <Globe className="w-3.5 h-3.5 text-indigo-400" />
-                <span>Multi-language</span>
-              </div>
-              <div className="flex items-center space-x-1.5 text-xs text-slate-400">
                 <Shield className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Privacy First</span>
+                <span>Runs in your browser</span>
               </div>
               <div className="flex items-center space-x-1.5 text-xs text-slate-400">
                 <RefreshCw className="w-3.5 h-3.5 text-cyan-400 animate-spin-slow" />
-                <span>Fast Core Engine</span>
+                <span>Free, no account</span>
               </div>
             </div>
           </div>
@@ -106,13 +104,14 @@ export default function Footer() {
             <ul className="space-y-2 text-xs">
               <li><Link href="/about" className="text-slate-500 dark:text-slate-400 hover:text-primary transition-all">About Us</Link></li>
               <li><Link href="/contact" className="text-slate-500 dark:text-slate-400 hover:text-primary transition-all">Contact</Link></li>
+              <li><Link href="/dashboard" className="text-slate-500 dark:text-slate-400 hover:text-primary transition-all">My Activity</Link></li>
             </ul>
           </div>
         </div>
 
         <div className="mt-8 pt-8 border-t border-slate-200/50 dark:border-slate-800/50 flex flex-col md:flex-row justify-between items-center space-y-4 md:space-y-0">
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            &copy; {new Date().getFullYear()} Easytoconvert. All rights reserved. PWA Ready.
+            &copy; {new Date().getFullYear()} Easytoconvert. All rights reserved.
           </p>
           <p className="text-xs text-slate-500 dark:text-slate-400 flex items-center">
             Made with <Heart className="w-3 h-3 mx-1 text-red-500 fill-red-500" /> for developers & content creators.

@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Shield, Sparkles, Zap, Award } from "lucide-react";
+import { Shield, Sparkles, Zap, Github } from "lucide-react";
 
 export function AboutPageClient() {
   return (
@@ -35,7 +35,8 @@ export function AboutPageClient() {
           <div className="space-y-1.5">
             <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200">Browser-First Speed</h4>
             <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-              No server rounds, no uploads delays. Files compile locally in milliseconds.
+              No upload, no queue, no waiting for a worker to pick up your job. Conversion starts the moment you
+              drop the file.
             </p>
           </div>
         </div>
@@ -47,7 +48,8 @@ export function AboutPageClient() {
           <div className="space-y-1.5">
             <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200">Privacy & Security</h4>
             <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-              No cloud logging, tracking, or file caching. Security is built-in.
+              No accounts, no ad trackers, no file storage. The only time your data leaves the browser is when
+              you switch on an AI tool, and we say so at the switch.
             </p>
           </div>
         </div>
@@ -66,12 +68,21 @@ export function AboutPageClient() {
 
         <div className="glass-card p-6 flex space-x-4">
           <div className="p-3 bg-purple-500/10 text-purple-500 rounded-xl h-fit">
-            <Award className="w-5 h-5" />
+            <Github className="w-5 h-5" />
           </div>
           <div className="space-y-1.5">
-            <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200">Developer Integrations</h4>
+            <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200">Open Source</h4>
             <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-              Clean API routes, mock code generation, schema structures for builders.
+              The whole thing is{" "}
+              <a
+                href="https://github.com/Jians1987/EasyToconvert"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-indigo-500 hover:underline font-semibold"
+              >
+                on GitHub
+              </a>
+              , so you can check the privacy claims against the code rather than taking our word for it.
             </p>
           </div>
         </div>

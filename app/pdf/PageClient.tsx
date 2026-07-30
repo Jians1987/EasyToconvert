@@ -17,7 +17,6 @@ import {
   Trash2, RotateCw, ArrowUp, ArrowDown, Plus, Square, Circle as CircleIcon, PenTool, Edit3,
   Paintbrush, ChevronsUpDown, MousePointer, Check, ArrowRight, Upload, Signature, Zap
 } from "lucide-react";
-import { useAuth } from "@/context/AuthContext";
 
 type PdfMode = "merge" | "split" | "rotate" | "to-doc" | "to-excel" | "to-image" | "edit" | "protect" | "compress" | "image-to-pdf" | "word-to-pdf" | "excel-to-pdf" | "ppt-to-pdf";
 
@@ -351,7 +350,6 @@ export function PdfPageClient() {
   const addImgInputRef = useRef<HTMLInputElement | null>(null);
 
   const { addHistoryItem, favorites, toggleFavorite } = useConversions();
-  const { isUnlimited, openAuthModal } = useAuth();
 
   const handleFilesSelected = async (files: File[]) => {
     setSelectedFiles(files);
@@ -829,7 +827,7 @@ export function PdfPageClient() {
       } else if (mode === "to-doc") {
         const file = selectedFiles[0];
         let blob: Blob | undefined;
-        const imgScale = isUnlimited ? 3 : 2;
+        const imgScale = 3;
         const ocrFallback = ocrEnabled ? "unlimited" : "none";
 
         // Browser engine runner (structured/text/image + Unlimited OCR for scanned pages)
@@ -1332,15 +1330,9 @@ export function PdfPageClient() {
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
                     <label className="text-[10px] uppercase font-bold text-slate-400">Output Mode</label>
-                    {isUnlimited ? (
-                      <span className="flex items-center gap-1 text-[9px] font-bold text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-900/30 px-2 py-0.5 rounded-full">
-                        <Zap className="w-2.5 h-2.5" /> Pro — 3× Image Quality
-                      </span>
-                    ) : (
-                      <button onClick={openAuthModal} className="text-[9px] font-semibold text-indigo-500 hover:text-indigo-700 underline">
-                        Sign in for Pro 3× quality
-                      </button>
-                    )}
+                    <span className="flex items-center gap-1 text-[9px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/30 px-2 py-0.5 rounded-full">
+                      <Zap className="w-2.5 h-2.5" /> 3× Image Quality
+                    </span>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {(["layout", "exact", "hybrid", "image", "text"] as const).map((f) => {
@@ -1370,7 +1362,7 @@ export function PdfPageClient() {
                     {docFidelity === "layout" && "Detects headings, paragraphs, bold/italic, and tables. Reflows text — best for re-editing prose. Scanned pages are auto-OCR'd."}
                     {docFidelity === "exact" && "Places every line at its original position and re-embeds logos/photos, staying fully editable. Best for clean editing. Note: vector lines/borders/shading aren't reproduced."}
                     {docFidelity === "hybrid" && "Full visual replica: the exact page image sits behind editable text on top. Reproduces all graphics. Best for pixel-accuracy. Larger files; edits may seam on coloured backgrounds."}
-                    {docFidelity === "image" && `Renders each page as a ${isUnlimited ? "3×" : "2×"} resolution image — pixel-perfect but not editable.`}
+                    {docFidelity === "image" && "Renders each page as a 3× resolution image — pixel-perfect but not editable."}
                     {docFidelity === "text" && "Extracts raw text in reading order. Fastest option, no formatting preserved."}
                   </p>
                 </div>
@@ -1453,36 +1445,25 @@ export function PdfPageClient() {
                     </button>
                   ))}
                 </div>
-                {isUnlimited ? (
-                  <>
-                    <label className="flex items-center space-x-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={cloudEnhance}
-                        onChange={(e) => setCloudEnhance(e.target.checked)}
-                        className="rounded border-slate-300"
-                      />
-                      <span className="flex items-center gap-1 text-[10px] text-slate-500">
-                        <Zap className="w-3 h-3 text-amber-500" />
-                        Cloud AI (Kimi Vision OCR) — Pro Feature
-                      </span>
-                    </label>
-                    {cloudEnhance && (
-                      <div className="p-3 rounded-xl border border-amber-500/30 bg-amber-50/50 dark:bg-amber-950/10">
-                        <p className="text-[11px] text-amber-700 dark:text-amber-400 leading-relaxed">
-                          Sends page images to Kimi K3 (Moonshot AI) for state-of-the-art table detection.
-                        </p>
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <button
-                    onClick={openAuthModal}
-                    className="flex items-center gap-1.5 text-[10px] text-indigo-500 hover:text-indigo-700 font-semibold"
-                  >
-                    <Zap className="w-3 h-3" />
-                    Sign in to unlock Cloud AI (Kimi Vision OCR) for better accuracy
-                  </button>
+                <label className="flex items-center space-x-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={cloudEnhance}
+                    onChange={(e) => setCloudEnhance(e.target.checked)}
+                    className="rounded border-slate-300"
+                  />
+                  <span className="flex items-center gap-1 text-[10px] text-slate-500">
+                    <Zap className="w-3 h-3 text-amber-500" />
+                    Cloud AI (Kimi Vision OCR) — higher accuracy, leaves your device
+                  </span>
+                </label>
+                {cloudEnhance && (
+                  <div className="p-3 rounded-xl border border-amber-500/30 bg-amber-50/50 dark:bg-amber-950/10">
+                    <p className="text-[11px] text-amber-700 dark:text-amber-400 leading-relaxed">
+                      Heads up: this uploads an image of each page to Kimi K3 (Moonshot AI) for table
+                      detection. Leave it off to keep the whole conversion on your device.
+                    </p>
+                  </div>
                 )}
                 {/* Progress indicator */}
                 {processing && tatrProgressPct > 0 && (

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { MediaPageClient } from "./PageClient";
 
 export const metadata: Metadata = {
-  title: "Free Online Video & Audio Converter – Compress MP4, MP3 | EasyToConvert",
+  title: "Free Online Video & Audio Converter – Compress MP4, MP3",
   description:
     "Compress and convert video and audio files online for free using FFmpeg WebAssembly. No uploads — everything runs in your browser.",
   keywords: [

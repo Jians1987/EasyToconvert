@@ -33,11 +33,9 @@ test.describe("All routes load", () => {
     ["/javascript", /Code & Styling Utilities/i],
     ["/ai", /AI Productivity Suite/i],
     ["/media", /Video & Audio Studio/i],
-    ["/dashboard", /User Dashboard/i],
+    ["/dashboard", /My Activity/i],
     ["/about", /About Easytoconvert/i],
-    ["/contact", /Contact Us/i],
-    ["/blog", /Articles & Guides/i],
-    ["/api-docs", /Developer API/i],
+    ["/contact", /^Contact$/i],
   ] as const;
 
   for (const [route, heading] of routes) {
@@ -87,10 +85,8 @@ test.describe("Footer", () => {
     await page.goto("/");
     await page.getByRole("link", { name: "About Us" }).click();
     await expect(page).toHaveURL(/\/about$/);
-    await page.getByRole("link", { name: "API Documentation" }).click();
-    await expect(page).toHaveURL(/\/api-docs$/);
-    await page.getByRole("link", { name: "Blog" }).click();
-    await expect(page).toHaveURL(/\/blog$/);
+    await page.getByRole("link", { name: "Contact" }).first().click();
+    await expect(page).toHaveURL(/\/contact$/);
   });
 });
 
@@ -108,8 +104,15 @@ test.describe("Home", () => {
     await page.getByRole("link", { name: /Launch PDF Utilities/i }).click();
     await expect(page).toHaveURL(/\/pdf$/);
     await page.goto("/");
-    await page.getByRole("link", { name: "Go to Dashboard" }).click();
-    await expect(page).toHaveURL(/\/dashboard$/);
+    await page.getByRole("link", { name: "Open PDF Tools" }).click();
+    await expect(page).toHaveURL(/\/pdf$/);
+  });
+
+  test("no fabricated social proof or usage stats", async ({ page }) => {
+    await page.goto("/");
+    for (const fake of ["Sarah Chen", "Marcus Vance", "Helena Rostova", "Mock Conversions", "5M+"]) {
+      await expect(page.getByText(fake)).toHaveCount(0);
+    }
   });
 
   test("no longer advertises the missing Background Remover", async ({ page }) => {
@@ -144,38 +147,37 @@ test.describe("Home", () => {
 
 // ───────────── Contact form ─────────────
 test.describe("Contact", () => {
-  test("valid submission shows success state", async ({ page }) => {
+  // The form has no backend; it must hand off to the visitor's mail client
+  // rather than swallow the message behind a fake success screen.
+  test("submitting composes a mailto: instead of faking a success state", async ({ page }) => {
+    const pageErrors: string[] = [];
+    page.on("pageerror", (e) => pageErrors.push(e.message));
     await page.goto("/contact");
+
     await page.getByPlaceholder("Jane Doe").fill("Test User");
     await page.getByPlaceholder("jane@company.com").fill("test@example.com");
     await page.getByPlaceholder("How can we help?").fill("This is a test message.");
-    await page.getByRole("button", { name: /Submit Message/i }).click();
-    await expect(page.getByText(/Message Received/i)).toBeVisible();
+    await page.getByRole("button", { name: /Compose Email/i }).click();
+
+    // The old form showed a success screen while discarding the message.
+    await expect(page.getByText(/Message Received/i)).toHaveCount(0);
+    expect(pageErrors).toEqual([]);
+
+    const mailto = page.locator('a[href^="mailto:"]').first();
+    await expect(mailto).toHaveAttribute("href", /support@easytoconvert\.in/);
   });
 });
 
-// ───────────── Blog ─────────────
-test.describe("Blog", () => {
-  test("Read Article navigates (dead-control fix)", async ({ page }) => {
-    await page.goto("/blog");
-    await page.getByRole("link", { name: /Read Article/i }).first().click();
-    await expect(page).toHaveURL(/\/image$/);
-  });
-});
-
-// ───────────── API docs ─────────────
-test.describe("API docs", () => {
-  test("language tabs swap the snippet and copy works", async ({ page }) => {
-    await page.goto("/api-docs");
-    await expect(page.locator("pre")).toContainText("curl");
-    await page.getByRole("button", { name: "NodeJS" }).click();
-    await expect(page.locator("pre")).toContainText("axios");
-    await page.getByRole("button", { name: "python" }).click();
-    await expect(page.locator("pre")).toContainText("requests");
-    await page.locator("pre ~ button, .relative > button").first().click();
-    const clip = await page.evaluate(() => navigator.clipboard.readText());
-    expect(clip).toContain("requests");
-  });
+// ───────────── Removed routes ─────────────
+test.describe("Retired pages", () => {
+  // /blog listed articles that did not exist and /api-docs documented endpoints
+  // that were never implemented. Both were removed rather than left as bait.
+  for (const route of ["/blog", "/api-docs"]) {
+    test(`${route} is gone`, async ({ page }) => {
+      const response = await page.goto(route);
+      expect(response?.status()).toBe(404);
+    });
+  }
 });
 
 // ───────────── AI tools (SafeMarkdown render) ─────────────
@@ -281,14 +283,11 @@ test.describe("Media (FFmpeg)", () => {
 
 // ───────────── Dashboard ─────────────
 test.describe("Dashboard", () => {
-  test("API key generate → reveal → regenerate", async ({ page }) => {
+  // The old "developer token" was Math.random() with no API behind it.
+  test("does not hand out fake API credentials", async ({ page }) => {
     await page.goto("/dashboard");
-    await page.getByRole("button", { name: /Create API Developer Token/i }).click();
-    await expect(page.getByText(/^•+$/)).toBeVisible(); // masked
-    await page.locator("div.font-mono button").first().click(); // reveal (Eye)
-    await expect(page.getByText(/^ehp_/)).toBeVisible();
-    await page.getByRole("button", { name: /Regenerate/i }).click();
-    await expect(page.getByText(/^ehp_/)).toBeVisible();
+    await expect(page.getByRole("button", { name: /API|Token/i })).toHaveCount(0);
+    await expect(page.getByText(/^ehp_/)).toHaveCount(0);
   });
 
   test("clear history empties the table", async ({ page }) => {

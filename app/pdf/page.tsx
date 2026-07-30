@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { PdfPageClient } from "./PageClient";
 
 export const metadata: Metadata = {
-  title: "Free PDF Tools – Merge, Split, Edit, Convert PDF Online | EasyToConvert",
+  title: "Free PDF Tools – Merge, Split, Edit, Convert PDF Online",
   description:
     "Merge, split, rotate, password-protect, and convert PDFs to Word, Excel, or JPG — all free, in your browser. No file uploads, no data stored.",
   keywords: [

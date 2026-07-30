@@ -91,9 +91,12 @@ test.describe("Edge: messaging & safety", () => {
     await expect(page.locator('input[type=file]')).toHaveCount(1);
   });
 
-  test("Sign-in CTA is relabelled to Dashboard (no fake auth)", async ({ page }) => {
-    await page.goto("/");
-    await expect(page.getByRole("link", { name: "Sign In" })).toHaveCount(0);
+  test("no sign-in or Pro upsell anywhere (the account system was fake)", async ({ page }) => {
+    for (const route of ["/", "/pdf", "/dashboard"]) {
+      await page.goto(route);
+      await expect(page.getByRole("button", { name: /^Sign In/i })).toHaveCount(0);
+      await expect(page.getByText(/Unlimited Pro|Pro Feature|Unlock Unlimited/i)).toHaveCount(0);
+    }
   });
 });
 

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { ImagePageClient } from "./PageClient";
 
 export const metadata: Metadata = {
-  title: "Free Image Converter & Compressor – Resize, Convert, Compress Online | EasyToConvert",
+  title: "Free Image Converter & Compressor – Resize, Convert, Compress Online",
   description:
     "Compress, resize, and convert images between JPG, PNG, WebP, GIF formats for free in your browser. No uploads needed.",
   keywords: [
