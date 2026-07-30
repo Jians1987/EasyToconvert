@@ -115,6 +115,12 @@ export async function POST(req: Request) {
       port,
       secure: port === 465, // 465 = implicit TLS; 587 upgrades via STARTTLS
       auth: { user, pass },
+      // Without these, nodemailer waits ~2 minutes on an unresponsive host and
+      // the visitor sits on "Sending…" until the serverless function is killed.
+      // Worst case here stays inside the route's 30s maxDuration.
+      connectionTimeout: 10_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 20_000,
     });
 
     await transporter.sendMail({
