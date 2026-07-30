@@ -206,8 +206,11 @@ test.describe("AI tools", () => {
     await page.getByRole("button", { name: "Document Translator" }).click();
     await page.locator(inputArea).fill("Hello world");
     await page.getByRole("button", { name: /Run AI translate/i }).click();
-    // scope to the output panel — the engine banner also mentions "translation previews"
-    await expect(page.locator(".prose").getByText(/DeepSeek Translation/i)).toBeVisible();
+    // Scope to the output panel — the engine banner also mentions "translation
+    // previews". The heading is provider-agnostic since aab201e made the engine
+    // label dynamic; it is no longer hardcoded to DeepSeek.
+    await expect(page.locator(".prose").getByText(/AI Translation/i)).toBeVisible();
+    await expect(page.locator(".prose").getByText(/Hola mundo/)).toBeVisible();
   });
 
   test("summarize button is disabled until a file is chosen", async ({ page }) => {
@@ -406,8 +409,9 @@ test.describe("PDF modes", () => {
     const preview = page.locator('img[alt="Page 1"]');
     await preview.waitFor({ timeout: 30000 });
     
-    // Select Text tool
-    await page.getByRole("button", { name: "Text", exact: true }).click();
+    // Select Text tool. The buttons carry aria-label="Editor <tool>", which
+    // overrides the visible "Text" label for accessible-name matching.
+    await page.getByRole("button", { name: "Editor text", exact: true }).click();
     await page.getByPlaceholder(/Text value.../i).fill("Approved");
     
     // Click page to place annotation

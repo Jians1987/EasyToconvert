@@ -5,9 +5,12 @@
  *     Model 1: Xenova/table-transformer-detection   → locates table bounding boxes
  *     Model 2: Xenova/table-transformer-structure-recognition → rows / columns / headers
  *   - PDF.js text-layer cell mapping (PDFs with selectable text — zero OCR latency)
- *   - Tesseract.js cell OCR fallback (scanned images / image-only PDFs)
+ *   - Unlimited-OCR row fallback (scanned images / image-only PDFs)
  *
- * All inference runs on-device in the browser via WebAssembly. Nothing is uploaded.
+ * TATR inference runs on-device via WebAssembly, but the OCR fallback does not:
+ * ocrTableGrid posts each row crop to /api/ai. A PDF with a text layer is
+ * therefore fully local; a scanned page is not. Do not describe this module as
+ * "nothing is uploaded" without that qualifier.
  */
 
 export interface BBox {
@@ -312,7 +315,7 @@ export async function extractTables(
       // Fast path: use PDF.js text positions
       grid = buildGrid(rows, cols, textItems, bbox, canvas.width, canvas.height);
     } else if (rows.length > 0 && cols.length > 0) {
-      // Slow path: per-cell Tesseract OCR
+      // Slow path: per-row OCR — uploads crops to the OCR service
       grid = await ocrTableGrid(tableCrop, rows, cols, onProgress);
     }
 

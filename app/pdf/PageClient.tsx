@@ -18,7 +18,10 @@ import {
   Paintbrush, ChevronsUpDown, MousePointer, Check, ArrowRight, Upload, Signature, Zap
 } from "lucide-react";
 
-type PdfMode = "merge" | "split" | "rotate" | "to-doc" | "to-excel" | "to-image" | "edit" | "protect" | "compress" | "image-to-pdf" | "word-to-pdf" | "excel-to-pdf" | "ppt-to-pdf";
+// Office→PDF (Word/Excel/PPT) is deliberately absent: it needs a converter
+// service (LibreOffice/Gotenberg/CloudConvert) that this project does not run,
+// and the endpoint behind it only ever returned 501.
+type PdfMode = "merge" | "split" | "rotate" | "to-doc" | "to-excel" | "to-image" | "edit" | "protect" | "compress" | "image-to-pdf";
 
 
 interface TextItem {
@@ -84,34 +87,6 @@ const parsePageSelection = (value: string, total: number): number[] => {
   return Array.from(pages);
 };
 
-async function convertPdfToDocxWithAdobe(
-  file: File,
-  password?: string
-): Promise<Blob> {
-  const formData = new FormData();
-  formData.append("file", file);
-  formData.append("ocrLocale", "en-US");
-  if (password) formData.append("password", password);
-
-  const response = await fetch("/api/pdf/adobe-export", {
-    method: "POST",
-    body: formData,
-  });
-
-  if (!response.ok) {
-    let message = "Adobe PDF Services conversion failed.";
-    try {
-      const payload = await response.json();
-      if (payload?.error) message = payload.error;
-    } catch {
-      const text = await response.text();
-      if (text) message = text.slice(0, 200);
-    }
-    throw new Error(message);
-  }
-
-  return response.blob();
-}
 const tableFromOcrText = (text: string): string[][] =>
   text
     .split("\n")
@@ -408,9 +383,6 @@ export function PdfPageClient() {
       case "protect": return "Protect";
       case "compress": return "Compress";
       case "image-to-pdf": return "Image to PDF";
-      case "word-to-pdf": return "Word to PDF";
-      case "excel-to-pdf": return "Excel to PDF";
-      case "ppt-to-pdf": return "PPT to PDF";
     }
   }, [mode]);
 
@@ -418,16 +390,13 @@ export function PdfPageClient() {
     merge: "Combine multiple PDF files into one document. Set an optional password to encrypt the output.",
     split: "Extract specific pages into a separate PDF file.",
     rotate: "Rotate all pages or a specific set of pages by 90°, 180°, or 270°.",
-    "to-doc": "Convert a PDF into a Word Document (.docx). Adobe High Quality creates the best editable output; Private Browser remains available as a local fallback.",
+    "to-doc": "Convert a PDF into a Word Document (.docx). Pick an output mode below — everything runs in your browser, and scanned pages can be sent for OCR if you enable it.",
     "to-excel": "Extract tables from a PDF into an Excel Spreadsheet (.xlsx). Uses Microsoft Table Transformer (on-device) or Kimi Vision Cloud AI.",
     "to-image": "Render each page of a PDF as a high-quality JPG image you can save individually.",
     edit: "Draw, annotate, add text, stamps, signatures, images, and shapes directly on PDF pages. Reorder, rotate, delete, and export.",
     protect: "Encrypt your PDF with a password. Apply advanced permissions to restrict printing, copying, and modifications.",
-    compress: "Reduce the file size of your PDF document without losing significant quality.",
+    compress: "Rewrite the PDF with object streams to strip structural bloat. This is lossless, so gains depend on the file — documents dominated by scanned images will barely shrink.",
     "image-to-pdf": "Convert JPG, PNG, or other images into a single PDF document.",
-    "word-to-pdf": "Convert Word Documents (.docx, .doc) to PDF.",
-    "excel-to-pdf": "Convert Excel Spreadsheets (.xlsx, .xls) to PDF.",
-    "ppt-to-pdf": "Convert PowerPoint Presentations (.pptx, .ppt) to PDF.",
   };
 
   // Check if any uploaded PDFs are encrypted
@@ -1023,30 +992,6 @@ export function PdfPageClient() {
           downloadUrl: url,
         });
 
-      } else if (mode === "word-to-pdf" || mode === "excel-to-pdf" || mode === "ppt-to-pdf") {
-        const file = selectedFiles[0];
-        const formData = new FormData();
-        formData.append("file", file);
-        formData.append("mode", mode);
-        const res = await fetch("/api/pdf/office-to-pdf", {
-          method: "POST",
-          body: formData,
-        });
-        if (!res.ok) {
-           const errText = await res.text();
-           throw new Error(errText);
-        }
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        setDownloadUrl(url);
-        addHistoryItem({
-          fileName: `${file.name.replace(/\.[^/.]+$/, "")}.pdf`,
-          fileSize: blob.size,
-          toolType: mode,
-          status: "success",
-          downloadUrl: url,
-        });
-
       } else if (mode === "edit") {
         const file = selectedFiles[0];
         const pdf = await loadWithPassword(file);
@@ -1183,9 +1128,6 @@ export function PdfPageClient() {
               { id: "protect", label: "Protect" },
               { id: "compress", label: "Compress" },
               { id: "image-to-pdf", label: "Img→PDF" },
-              { id: "word-to-pdf", label: "Word→PDF" },
-              { id: "excel-to-pdf", label: "Excel→PDF" },
-              { id: "ppt-to-pdf", label: "PPT→PDF" },
             ].map((t) => (
               <button
                 key={t.id}

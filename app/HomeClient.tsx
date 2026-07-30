@@ -88,7 +88,7 @@ export function HomeClient() {
       title: "Table Detection",
       icon: Table2,
       color: "from-rose-500/20 to-pink-500/20 text-rose-500 border-rose-500/30",
-      description: "Research-grade AI table detection powered by Microsoft Table Transformer (TATR). Locate tables in any PDF or image, extract rows & columns, export to CSV / JSON / Excel — 100% on-device.",
+      description: "Research-grade AI table detection powered by Microsoft Table Transformer (TATR). Locate tables in any PDF or image, extract rows & columns, export to CSV / JSON / Excel. Detection runs on-device; scanned pages use cloud OCR.",
       tools: ["Table Detector", "Structure Recognition", "CSV Export", "Excel Export", "JSON Export"],
       path: "/table-detect",
     },

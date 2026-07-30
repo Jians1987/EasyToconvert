@@ -222,25 +222,30 @@ test.describe("PDF tools", () => {
     await expect(page.getByRole("link", { name: /Download File/i })).toBeVisible({ timeout: 15000 });
   });
 
-  test("PDF to Word shows fidelity toggle (new feature)", async ({ page }) => {
+  test("PDF to Word shows the output-mode options", async ({ page }) => {
     await page.goto("/pdf");
-    await page.getByRole("button", { name: /Word/i }).click();
+    await page.getByRole("button", { name: "→ Word", exact: true }).click();
     await page.locator('input[type=file]').setInputFiles({
       name: "doc.pdf",
       mimeType: "application/pdf",
       buffer: await makePdf(1),
     });
-    await expect(page.getByRole("button", { name: /Exact Layout/i })).toBeVisible();
-    await expect(page.getByRole("button", { name: /Editable Text/i })).toBeVisible();
+    // Current fidelity modes — the old "Exact Layout"/"Editable Text" pair and
+    // the Adobe/Private-Browser engine switch were replaced by these.
+    await expect(page.getByRole("button", { name: "Structured (Editable)" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Exact Layout (Editable)" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Plain Text" })).toBeVisible();
   });
 });
 
 // ───────────────────────── DASHBOARD ─────────────────────────
 test.describe("Dashboard", () => {
-  test("generates an API key", async ({ page }) => {
+  // The old "developer token" was a client-side Math.random() string with no
+  // API behind it, so the generator was removed rather than left as a prop.
+  test("issues no API credentials", async ({ page }) => {
     await page.goto("/dashboard");
-    await page.getByRole("button", { name: /Create API Developer Token/i }).click();
-    await expect(page.getByRole("button", { name: /Regenerate/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Create API Developer Token/i })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /Regenerate/i })).toHaveCount(0);
   });
 
   test("analytics reflect real history (bug fix #15)", async ({ page }) => {

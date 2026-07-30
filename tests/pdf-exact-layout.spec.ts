@@ -14,7 +14,11 @@ async function makePdf(): Promise<Buffer> {
   return Buffer.from(await document.save());
 }
 
-async function convert(page: Page, mode: "Exact Layout" | "Editable Text") {
+// Current output-mode labels. The Adobe/Private-Browser engine switch these
+// tests used to click was removed in 267f34d.
+type Fidelity = "Exact Layout (Image)" | "Structured (Editable)";
+
+async function convert(page: Page, mode: Fidelity) {
   await page.goto("/pdf");
   await page.getByRole("button", { name: "→ Word" }).click();
   await page.locator('input[type="file"]').setInputFiles({
@@ -22,7 +26,6 @@ async function convert(page: Page, mode: "Exact Layout" | "Editable Text") {
     mimeType: "application/pdf",
     buffer: await makePdf(),
   });
-  await page.getByRole("button", { name: "Private Browser" }).click();
   await page.getByRole("button", { name: mode, exact: true }).click();
   await page.getByRole("button", { name: "Process PDF to Word" }).click();
   const [download] = await Promise.all([
@@ -33,7 +36,7 @@ async function convert(page: Page, mode: "Exact Layout" | "Editable Text") {
 }
 
 test("Exact Layout embeds one faithful page image per PDF page", async ({ page }) => {
-  const archive = await convert(page, "Exact Layout");
+  const archive = await convert(page, "Exact Layout (Image)");
   const media = Object.keys(archive.files).filter((name) => /^word\/media\/.+/.test(name));
   expect(media).toHaveLength(2);
   const xml = await archive.file("word/document.xml")!.async("text");
@@ -41,7 +44,7 @@ test("Exact Layout embeds one faithful page image per PDF page", async ({ page }
 });
 
 test("Editable Text remains selectable and contains no page screenshots", async ({ page }) => {
-  const archive = await convert(page, "Editable Text");
+  const archive = await convert(page, "Structured (Editable)");
   const media = Object.keys(archive.files).filter((name) => /^word\/media\/.+/.test(name));
   expect(media).toHaveLength(0);
   const xml = await archive.file("word/document.xml")!.async("text");

@@ -7,10 +7,13 @@
  *   PDF / image → PDF.js page render → canvas
  *   → Microsoft Table Transformer detection  (Xenova/table-transformer-detection)
  *   → Microsoft Table Transformer structure  (Xenova/table-transformer-structure-recognition)
- *   → PDF.js text-layer mapping (PDFs) or Tesseract.js OCR (images)
+ *   → PDF.js text-layer mapping (PDFs) or Unlimited-OCR per row (scans/images)
  *   → grid display + CSV / JSON / XLSX export
  *
- * Runs 100 % on-device via ONNX Runtime Web (WebAssembly). Nothing is uploaded.
+ * Detection and structure recognition run on-device via ONNX Runtime Web
+ * (WebAssembly). The OCR fallback does NOT: ocrTableGrid uploads each row crop
+ * to /api/ai, so a PDF with a text layer stays local while a scanned page does
+ * not. Keep the UI copy honest about that distinction.
  */
 
 import React, { useCallback, useRef, useState } from "react";
@@ -302,7 +305,7 @@ export default function TableDetectPage() {
   return (
     <ToolLayout
       title="Table Detection & Extraction"
-      description="Research-grade table detection using Microsoft's Table Transformer (TATR) — trained on PubTables-1M. Locate tables in any PDF or image, recognise rows & columns, extract structured data, and export to CSV, JSON, or Excel. Runs 100% in your browser via ONNX Runtime Web."
+      description="Research-grade table detection using Microsoft's Table Transformer (TATR) — trained on PubTables-1M. Locate tables in any PDF or image, recognise rows & columns, extract structured data, and export to CSV, JSON, or Excel. Detection runs in your browser via ONNX Runtime Web. PDFs with a text layer stay fully on-device; scanned pages and images fall back to cloud OCR, which uploads each detected row."
       category="ai"
     >
       <div className="space-y-6">
@@ -311,7 +314,7 @@ export default function TableDetectPage() {
         <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
           <div className="flex items-center space-x-2 text-xs font-semibold text-slate-500 dark:text-slate-400">
             <Table2 className="w-4 h-4 text-indigo-500" />
-            <span>Microsoft Table Transformer · ONNX Runtime Web · On-device</span>
+            <span>Microsoft Table Transformer · ONNX Runtime Web · Detection on-device</span>
           </div>
           <button
             onClick={() => toggleFavorite("table-detect")}
@@ -551,7 +554,7 @@ export default function TableDetectPage() {
                         Structure detected ({result.tables[activeTable].rows.length} rows, {result.tables[activeTable].columns.length} cols) but no text was extracted.
                       </p>
                       <p className="text-[10px] text-slate-400">
-                        For scanned images, Tesseract OCR will run per-cell automatically. For PDFs, ensure the document has a selectable text layer.
+                        For scanned images, each detected row is sent to the cloud OCR service automatically. To keep everything on your device, use a PDF with a selectable text layer.
                       </p>
                     </div>
                   )}
