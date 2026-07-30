@@ -208,7 +208,7 @@ export function AiPageClient() {
           }
 
           // Precise extraction: when a page has no selectable text it is a scanned
-          // image — render it and run on-device OCR instead of giving up.
+          // image — render it and send it for OCR instead of giving up.
           if (looksScanned(pageText)) {
             setOcrStatus(`Running OCR on scanned page ${i} of ${numPages}…`);
             const viewport = page.getViewport({ scale: 2.0 });
@@ -218,11 +218,11 @@ export function AiPageClient() {
             const ctx = canvas.getContext("2d");
             if (ctx) {
               await page.render({ canvasContext: ctx, viewport }).promise;
-              const { text: ocrText, confidence } = await ocrImageWithUnlimitedOcr(canvas, setOcrProgress);
-                
+              const { text: ocrText } = await ocrImageWithUnlimitedOcr(canvas, setOcrProgress);
+
               if (ocrText.trim()) {
                 ocrPagesUsed++;
-                extractedText += `\n\n--- Page ${i} (OCR · ${confidence}% confidence) ---\n\n${ocrText}`;
+                extractedText += `\n\n--- Page ${i} (OCR) ---\n\n${ocrText}`;
                 continue;
               }
             }
@@ -252,10 +252,10 @@ export function AiPageClient() {
           return;
         }
         setOcrStatus("Recognizing text with Unlimited OCR…");
-        const { text: ocrText, confidence } = await ocrImageWithUnlimitedOcr(selectedFile, setOcrProgress);
+        const { text: ocrText } = await ocrImageWithUnlimitedOcr(selectedFile, setOcrProgress);
         setOcrStatus("");
 
-        result = `### 🔎 Image OCR — Extracted Text\n\n**File**: ${selectedFile.name}\n**Confidence**: ${confidence}%\n**Engine**: Baidu Unlimited-OCR (Structural Markdown & LaTeX)\n\n---\n\n${ocrText || "_No readable text was found in this image._"}`;
+        result = `### 🔎 Image OCR — Extracted Text\n\n**File**: ${selectedFile.name}\n**Engine**: Baidu Unlimited-OCR (Structural Markdown & LaTeX)\n\n---\n\n${ocrText || "_No readable text was found in this image._"}`;
 
       } else if (mode === "explain") {
         if (!inputText.trim()) {
@@ -316,7 +316,7 @@ export function AiPageClient() {
   return (
     <ToolLayout
       title="AI Productivity Suite"
-      description="Extract text locally with on-device OCR, or opt in to cloud AI for document summaries, code explanations, and translations."
+      description="Read text out of scanned pages and images, summarize documents, explain code, and translate text. Every tool on this page sends your content to an AI service — none of it runs on your device."
       category="ai"
     >
       <div className="space-y-6">

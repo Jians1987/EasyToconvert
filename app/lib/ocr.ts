@@ -1,9 +1,15 @@
-// Unlimited OCR (Baidu Inc.) — State-of-the-art vision-language document parsing model.
-// Replaces legacy Tesseract engine for all OCR operations in EasyToconvert.
+// Unlimited OCR (Baidu Inc.) — vision-language document parsing model.
+// Replaces the legacy Tesseract engine for all OCR operations in EasyToconvert.
+//
+// NOTE: this runs server-side. Every function here uploads the image to
+// /api/ai, which forwards it to the Unlimited-OCR server — nothing in this
+// module is on-device, so UI copy must not describe OCR as local.
 
+// The Unlimited-OCR endpoint returns recognised text only — it reports no
+// per-page confidence, so this deliberately has no confidence field rather
+// than inventing a score to display.
 export interface OcrResult {
   text: string;
-  confidence: number; // 0..100
 }
 
 type OcrImage = string | HTMLCanvasElement | File | Blob;
@@ -93,10 +99,7 @@ export async function ocrImageWithUnlimitedOcr(
   const data = await res.json();
   if (onProgress) onProgress(100);
 
-  return {
-    text: data.text || "",
-    confidence: 99,
-  };
+  return { text: data.text || "" };
 }
 
 /**
