@@ -66,9 +66,15 @@ export async function POST(request: Request) {
     const verdict = await rateLimit(clientKey(request), adobeRules());
     if (!verdict.ok) {
       logAdobeExport({ outcome: "rate_limited" });
+      const kind = verdict.limitKind ?? "custom";
+      const humanWindow =
+        kind === "daily" ? "tomorrow" : kind === "hourly" ? "in an hour" : `in about ${verdict.retryAfterSeconds}s`;
       return NextResponse.json(
         {
-          error: `Rate limit reached for Adobe High Quality conversion — try again in about ${verdict.retryAfterSeconds}s. Switch to the In Browser engine for unlimited conversions, or run self-hosted with your own Adobe key.`,
+          code: "RATE_LIMITED",
+          limit: kind,
+          retryAfterSeconds: verdict.retryAfterSeconds,
+          error: `Adobe High Quality conversion limit reached — try again ${humanWindow}. Switch to the In Browser engine for unlimited conversions, or run self-hosted with your own Adobe key.`,
         },
         { status: 429, headers: { "Retry-After": String(verdict.retryAfterSeconds) } }
       );

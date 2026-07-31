@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { stripOuterFence, looksLikeRefusal, stripMarkdownSyntax } from "../app/lib/ocrMarkdown";
+import { stripOuterFence, looksLikeRefusal, stripMarkdownSyntax, looksLikeHallucination } from "../app/lib/ocrMarkdown";
 
 // These cover cases that are impractical to force from a live vendor on
 // demand (a real refusal, a malformed fence) — direct unit coverage instead.
@@ -77,5 +77,50 @@ test.describe("stripMarkdownSyntax", () => {
     expect(stripMarkdownSyntax("Plain text mode test\nSecond line of content")).toBe(
       "Plain text mode test\nSecond line of content"
     );
+  });
+});
+
+// The hallucination detector is a secondary safety check for when the image
+// validation gate passed (≥ 32×32) but the output is still implausible.
+// It intentionally fires only on high-confidence anomalies — wrong positives
+// on real invoices or spreadsheets would be far more harmful.
+test.describe("looksLikeHallucination", () => {
+  test("flags tiny image with implausibly long output", () => {
+    // 100 decoded bytes ≈ a sub-32×32 pixel image that slipped through;
+    // 3 001 chars of output is physically impossible for such an image.
+    const longOutput = "Financial table row\n".repeat(150);
+    expect(looksLikeHallucination(longOutput, 100)).toBe(true);
+  });
+
+  test("does not flag a legitimate long output from a real document image", () => {
+    // 50 000 bytes ≈ a normal scanned A4 page; dense text is plausible.
+    // Each line is unique (different index) so the repetition check won't fire.
+    const realText = Array.from({ length: 100 }, (_, i) => `Line ${i + 1} of extracted document text.`).join("\n");
+    expect(looksLikeHallucination(realText, 50_000)).toBe(false);
+  });
+
+  test("flags pathological line-level repetition regardless of image size", () => {
+    // 10 out of 12 non-empty lines are identical → well above the 40 % threshold.
+    const repeated =
+      Array(10).fill("Net sales   $1,234,567\n").join("") +
+      "Total assets   $9,876,543\n" +
+      "Total liabilities   $4,567,890\n";
+    expect(looksLikeHallucination(repeated, 100_000)).toBe(true);
+  });
+
+  test("does not flag a real table with varied row values (same structure, different data)", () => {
+    // A legitimate 8-row product table — each row is unique.
+    const table =
+      "| Item | Price |\n| --- | --- |\n" +
+      Array.from({ length: 8 }, (_, i) => `| Product ${i + 1} | $${(i + 1) * 15}.00 |\n`).join("");
+    expect(looksLikeHallucination(table, 10_000)).toBe(false);
+  });
+
+  test("returns false for empty text", () => {
+    expect(looksLikeHallucination("", 100)).toBe(false);
+  });
+
+  test("returns false when imageSizeBytes is zero", () => {
+    expect(looksLikeHallucination("some text", 0)).toBe(false);
   });
 });

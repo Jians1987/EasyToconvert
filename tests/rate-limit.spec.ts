@@ -54,13 +54,18 @@ test.describe("rateLimit (in-memory backend)", () => {
 // of which backend is active, and is arguably the more realistic model of a
 // burst anyway.
 test.describe("/api/ai rate limiting", () => {
-  test("returns 429 once the OCR budget is exhausted", async ({ request }) => {
+  test("returns 429 with structured error body once the OCR budget is exhausted", async ({ request }) => {
     const responses = await Promise.all(
       Array.from({ length: 80 }, () => request.post("/api/ai", { data: { action: "ocr" } }))
     );
     const limited = responses.find((res) => res.status() === 429);
     expect(limited).toBeTruthy();
     expect(limited!.headers()["retry-after"]).toBeTruthy();
+    const body = await limited!.json();
+    expect(body.code).toBe("RATE_LIMITED");
+    expect(["minute", "daily"]).toContain(body.limit);
+    expect(typeof body.retryAfterSeconds).toBe("number");
+    expect(body.retryAfterSeconds).toBeGreaterThan(0);
   });
 });
 
@@ -70,18 +75,22 @@ test.describe("/api/ai rate limiting", () => {
 // (default 3/min) than OCR/chat above. The check runs before the body is even
 // parsed, so no real file or Adobe credentials are needed to trip it.
 test.describe("/api/pdf/adobe-export rate limiting", () => {
-  test("returns 429 once the Adobe conversion budget is exhausted", async ({ request }) => {
-    let sawLimit = false;
+  test("returns 429 with structured error body once the Adobe conversion budget is exhausted", async ({ request }) => {
+    let limited: Awaited<ReturnType<typeof request.post>> | null = null;
     for (let i = 0; i < 10; i++) {
       const res = await request.post("/api/pdf/adobe-export");
       if (res.status() === 429) {
-        expect(res.headers()["retry-after"]).toBeTruthy();
-        const body = await res.json();
-        expect(body.error).toMatch(/rate limit/i);
-        sawLimit = true;
+        limited = res;
         break;
       }
     }
-    expect(sawLimit).toBe(true);
+    expect(limited).toBeTruthy();
+    expect(limited!.headers()["retry-after"]).toBeTruthy();
+    const body = await limited!.json();
+    expect(body.code).toBe("RATE_LIMITED");
+    expect(["minute", "daily"]).toContain(body.limit);
+    expect(typeof body.retryAfterSeconds).toBe("number");
+    expect(body.retryAfterSeconds).toBeGreaterThan(0);
+    expect(body.error).toMatch(/rate limit|limit reached/i);
   });
 });

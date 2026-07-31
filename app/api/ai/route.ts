@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import http from "node:http";
 import https from "node:https";
 import { rateLimit, clientKey, ocrRules, chatRules } from "@/app/lib/rateLimit";
-import { stripOuterFence, looksLikeRefusal, stripMarkdownSyntax } from "@/app/lib/ocrMarkdown";
+import { stripOuterFence, looksLikeRefusal, stripMarkdownSyntax, looksLikeHallucination } from "@/app/lib/ocrMarkdown";
 import { resolveOcrChain, type OcrProviderId } from "@/app/lib/ocrProviderChain";
+import { validateImageBase64 } from "@/app/lib/imageValidation";
 
 function postJsonNative(
   urlStr: string,
@@ -342,7 +343,7 @@ interface OcrAttemptLog {
   provider: OcrProviderId;
   retries: number;
   latencyMs: number;
-  outcome: "success" | "empty" | "error";
+  outcome: "success" | "empty" | "refusal" | "hallucination" | "error";
   /** Truncated Error.message only — never OCR text, image data, or the API key. */
   error?: string;
 }
@@ -352,12 +353,17 @@ interface OcrAttemptLog {
 function logOcrRequest(entry: {
   mode: OcrMode;
   requestedProvider: string;
+  pinned: boolean;
   chain: string[];
   attempts: OcrAttemptLog[];
   outcome: "success" | "warning" | "failure";
   finalProvider?: string;
   warning?: string;
   totalLatencyMs: number;
+  inputBytes?: number;
+  inputWidth?: number;
+  inputHeight?: number;
+  fallbackUsed: boolean;
 }) {
   const line = JSON.stringify({ event: "ocr_request", ...entry });
   if (entry.outcome === "failure") console.error(line);
@@ -367,7 +373,8 @@ function logOcrRequest(entry: {
 async function runOcrChain(
   imageBase64: string,
   mode: OcrMode,
-  requestedProvider?: string
+  requestedProvider?: string,
+  imageInfo?: { width?: number; height?: number; fileBytes?: number }
 ): Promise<{ text: string; provider: string; warning?: string }> {
   const chain = resolveOcrChain(requestedProvider);
   const attempts: OcrAttemptLog[] = [];
@@ -394,22 +401,44 @@ async function runOcrChain(
       if (!text) {
         if (firstError === undefined) firstError = new Error(`${provider} returned no text`);
         attempts.push({ provider, retries, latencyMs, outcome: "empty" });
-        continue; // empty → try the next provider rather than emit a blank doc
+        continue;
       }
 
-      const warning = looksLikeRefusal(text)
-        ? "The OCR model may have returned a refusal instead of a transcription — check the output."
-        : undefined;
-      attempts.push({ provider, retries, latencyMs, outcome: "success" });
+      // Check for refusal before hallucination — a refusal is a short, safe
+      // non-transcription; hallucination is long, plausible, but fabricated.
+      if (looksLikeRefusal(text)) {
+        if (firstError === undefined) firstError = new Error(`${provider} returned a refusal`);
+        attempts.push({ provider, retries, latencyMs, outcome: "refusal" });
+        continue; // try the next provider
+      }
+
+      const hallucinationWarning =
+        imageInfo?.fileBytes && looksLikeHallucination(text, imageInfo.fileBytes)
+          ? "OCR output may be fabricated — the image was very small relative to the output length. Verify the result."
+          : undefined;
+
+      const warning = hallucinationWarning;
+      attempts.push({
+        provider,
+        retries,
+        latencyMs,
+        outcome: hallucinationWarning ? "hallucination" : "success",
+      });
+
       logOcrRequest({
         mode,
         requestedProvider: requestedProvider || "auto",
+        pinned: !!requestedProvider && requestedProvider !== "auto",
         chain,
         attempts,
         outcome: warning ? "warning" : "success",
         finalProvider: provider,
         warning,
         totalLatencyMs: Date.now() - startedAt,
+        inputBytes: imageInfo?.fileBytes,
+        inputWidth: imageInfo?.width,
+        inputHeight: imageInfo?.height,
+        fallbackUsed: attempts.length > 1,
       });
       return { text, provider, warning };
     } catch (err) {
@@ -429,10 +458,15 @@ async function runOcrChain(
   logOcrRequest({
     mode,
     requestedProvider: requestedProvider || "auto",
+    pinned: !!requestedProvider && requestedProvider !== "auto",
     chain,
     attempts,
     outcome: "failure",
     totalLatencyMs: Date.now() - startedAt,
+    inputBytes: imageInfo?.fileBytes,
+    inputWidth: imageInfo?.width,
+    inputHeight: imageInfo?.height,
+    fallbackUsed: attempts.length > 1,
   });
   throw firstError instanceof Error ? firstError : new Error("No OCR provider is available");
 }
@@ -462,9 +496,15 @@ export async function POST(req: Request) {
     if (OCR_ACTIONS.has(action) || action === "deepseek-chat") {
       const verdict = await rateLimit(clientKey(req), action === "deepseek-chat" ? chatRules() : ocrRules());
       if (!verdict.ok) {
+        const kind = verdict.limitKind ?? "custom";
+        const humanWindow =
+          kind === "daily" ? "tomorrow" : kind === "hourly" ? "in an hour" : `in about ${verdict.retryAfterSeconds}s`;
         return NextResponse.json(
           {
-            error: `Rate limit reached — try again in about ${verdict.retryAfterSeconds}s. For very large documents or higher limits, run self-hosted with your own key.`,
+            code: "RATE_LIMITED",
+            limit: kind,
+            retryAfterSeconds: verdict.retryAfterSeconds,
+            error: `Rate limit reached — try again ${humanWindow}. For higher limits, run self-hosted with your own API key.`,
           },
           { status: 429, headers: { "Retry-After": String(verdict.retryAfterSeconds) } }
         );
@@ -479,9 +519,17 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "Image is too large" }, { status: 413 });
       }
 
+      const imageCheck = validateImageBase64(imageBase64);
+      if (!imageCheck.valid) {
+        return NextResponse.json(
+          { error: imageCheck.reason ?? "Invalid image", code: "INVALID_IMAGE" },
+          { status: 400 }
+        );
+      }
+
       const requestedProvider = typeof provider === "string" ? provider : undefined;
       try {
-        const result = await runOcrChain(imageBase64, ocrModeFromBody(mode), requestedProvider);
+        const result = await runOcrChain(imageBase64, ocrModeFromBody(mode), requestedProvider, imageCheck);
         return NextResponse.json({
           text: result.text,
           provider: result.provider,
@@ -530,6 +578,14 @@ export async function POST(req: Request) {
       }
       if (imageBase64.length > MAX_IMAGE_BASE64_LENGTH) {
         return NextResponse.json({ error: "Image is too large" }, { status: 413 });
+      }
+
+      const visionCheck = validateImageBase64(imageBase64);
+      if (!visionCheck.valid) {
+        return NextResponse.json(
+          { error: visionCheck.reason ?? "Invalid image", code: "INVALID_IMAGE" },
+          { status: 400 }
+        );
       }
 
       const apiKey = process.env.KIMI_API_KEY;

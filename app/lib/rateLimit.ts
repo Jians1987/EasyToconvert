@@ -24,12 +24,25 @@ export interface RateLimitRule {
   windowSeconds: number;
 }
 
+/** Human-readable label for the breached window — lets the UI say "try again
+ *  tomorrow" vs "try again in a minute" without re-deriving it from seconds. */
+export type LimitKind = "minute" | "hourly" | "daily" | "custom";
+
+function windowToKind(windowSeconds: number): LimitKind {
+  if (windowSeconds === 60) return "minute";
+  if (windowSeconds === 3_600) return "hourly";
+  if (windowSeconds === 86_400) return "daily";
+  return "custom";
+}
+
 export interface RateLimitResult {
   ok: boolean;
   remaining: number;
   limit: number;
   /** Seconds until the (breached) window resets — used for Retry-After. */
   retryAfterSeconds: number;
+  /** Which window was breached; absent when ok === true. */
+  limitKind?: LimitKind;
 }
 
 // key -> ascending request timestamps (ms). One entry per (client, window).
@@ -57,43 +70,64 @@ function memoryCheck(memKey: string, rule: RateLimitRule, now: number): RateLimi
     remaining: Math.max(0, rule.limit - hits.length),
     limit: rule.limit,
     retryAfterSeconds: ok ? 0 : rule.windowSeconds,
+    limitKind: windowToKind(rule.windowSeconds),
   };
 }
 
 /**
- * Fixed-window counter in Upstash via INCR + EXPIRE. Coarser than a sliding
- * window, but shared across instances, which is the property that matters.
- * Returns null when Upstash isn't configured or is unreachable (→ fall back).
+ * Fixed-window counters for ALL rules in a single Upstash pipeline call.
+ *
+ * Prior design made one round-trip per rule (sequential). For the OCR bucket
+ * (2 rules: per-minute + per-day) that was two sequential Upstash calls, each
+ * up to the 1 500 ms timeout — 3 s worst-case overhead per OCR request. Now
+ * it is one call regardless of how many rules are in play.
+ *
+ * Returns an array of the same length as `rules`. Each element is a result
+ * for that rule, or null (Upstash not configured / unreachable → caller falls
+ * back to the in-memory backend for that rule).
  */
-async function upstashCheck(key: string, rule: RateLimitRule): Promise<RateLimitResult | null> {
+async function upstashCheckBatch(key: string, rules: RateLimitRule[]): Promise<(RateLimitResult | null)[]> {
   const url = process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!url || !token) return null;
+  if (!url || !token) return rules.map(() => null);
 
-  const bucket = Math.floor(Date.now() / 1000 / rule.windowSeconds);
-  const redisKey = `rl:${key}:${rule.windowSeconds}:${bucket}`;
+  const nowSec = Math.floor(Date.now() / 1000);
+  const pipeline: unknown[] = [];
+  const redisKeys: string[] = [];
+
+  for (const rule of rules) {
+    const bucket = Math.floor(nowSec / rule.windowSeconds);
+    const rk = `rl:${key}:${rule.windowSeconds}:${bucket}`;
+    redisKeys.push(rk);
+    pipeline.push(["INCR", rk]);
+    pipeline.push(["EXPIRE", rk, rule.windowSeconds]);
+  }
+
   try {
     const res = await fetch(`${url.replace(/\/+$/, "")}/pipeline`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify([
-        ["INCR", redisKey],
-        ["EXPIRE", redisKey, rule.windowSeconds],
-      ]),
+      body: JSON.stringify(pipeline),
       signal: AbortSignal.timeout(1500),
     });
-    if (!res.ok) return null;
+    if (!res.ok) return rules.map(() => null);
     const data = await res.json();
-    const count = Number(data?.[0]?.result ?? 0);
-    if (!Number.isFinite(count) || count <= 0) return null;
-    return {
-      ok: count <= rule.limit,
-      remaining: Math.max(0, rule.limit - count),
-      limit: rule.limit,
-      retryAfterSeconds: count <= rule.limit ? 0 : rule.windowSeconds,
-    };
+
+    return rules.map((rule, i) => {
+      // Pipeline returns [INCR-result, EXPIRE-result, INCR-result, EXPIRE-result, …]
+      // INCR result is at index i*2; EXPIRE result at i*2+1 (not needed here).
+      const count = Number(data?.[i * 2]?.result ?? 0);
+      if (!Number.isFinite(count) || count <= 0) return null;
+      return {
+        ok: count <= rule.limit,
+        remaining: Math.max(0, rule.limit - count),
+        limit: rule.limit,
+        retryAfterSeconds: count <= rule.limit ? 0 : rule.windowSeconds,
+        limitKind: windowToKind(rule.windowSeconds),
+      };
+    });
   } catch {
-    return null; // network/timeout → fail over to in-memory
+    return rules.map(() => null); // network/timeout → fall back to in-memory
   }
 }
 
@@ -103,11 +137,12 @@ async function upstashCheck(key: string, rule: RateLimitRule): Promise<RateLimit
  */
 export async function rateLimit(key: string, rules: RateLimitRule[]): Promise<RateLimitResult> {
   const now = Date.now();
+  const upstashResults = await upstashCheckBatch(key, rules);
   let tightest: RateLimitResult | null = null;
 
-  for (const rule of rules) {
-    const viaUpstash = await upstashCheck(key, rule);
-    const result = viaUpstash ?? memoryCheck(`${key}:${rule.windowSeconds}`, rule, now);
+  for (let i = 0; i < rules.length; i++) {
+    const rule = rules[i];
+    const result = upstashResults[i] ?? memoryCheck(`${key}:${rule.windowSeconds}`, rule, now);
     if (!result.ok) return result;
     if (!tightest || result.remaining < tightest.remaining) tightest = result;
   }
