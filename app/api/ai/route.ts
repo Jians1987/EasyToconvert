@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import http from "node:http";
 import https from "node:https";
 import { rateLimit, clientKey, ocrRules, chatRules } from "@/app/lib/rateLimit";
-import { stripOuterFence, looksLikeRefusal } from "@/app/lib/ocrMarkdown";
+import { stripOuterFence, looksLikeRefusal, stripMarkdownSyntax } from "@/app/lib/ocrMarkdown";
+import { resolveOcrChain, type OcrProviderId } from "@/app/lib/ocrProviderChain";
 
 function postJsonNative(
   urlStr: string,
@@ -257,21 +258,88 @@ async function runLocalOcr(imageBase64: string): Promise<{ text: string; retries
   return { text: String(data.choices?.[0]?.message?.content ?? ""), retries: 0 };
 }
 
-/** Ordered provider chain. `provider`/OCR_PROVIDER pins it; otherwise Kimi first
- *  when configured, local model as a fallback for self-hosters. */
-function resolveOcrChain(requested?: string): Array<"kimi" | "local"> {
-  const pin = (requested || process.env.OCR_PROVIDER || "").trim().toLowerCase();
-  if (pin === "kimi") return ["kimi"];
-  if (pin === "local") return ["local"];
+// Mistral OCR is a purpose-built document-OCR endpoint (not a vision-chat
+// workaround like Kimi/local) — verified against the official docs at
+// docs.mistral.ai/api/endpoint/ocr on 2026-07-31. It always returns Markdown
+// per page; there is no raw-text mode, so "basic" mode is produced by
+// degrading that Markdown ourselves (see stripMarkdownSyntax) rather than
+// asking the API for something it doesn't offer.
+//
+// KNOWN QUIRK, confirmed 2026-07-31 with a real key: on a pathologically
+// degenerate input (a 1x1 pixel image), Mistral does NOT fail the way Kimi
+// does (a clean 400 "failed to decode image"). It returns 200 with a long,
+// well-formed-looking but entirely FABRICATED table ("Net sales", "Total
+// revenues" repeated across ~19 rows that have nothing to do with the input).
+// Neither the empty-output check nor looksLikeRefusal catches this — the
+// output is non-empty and reads nothing like a refusal. A REALISTIC blank
+// page (proper dimensions, genuinely blank) does NOT reproduce this — it
+// correctly returns empty text, caught normally. So the risk is specifically
+// pathologically-sized input (e.g. a future bug elsewhere producing a garbage
+// crop), not real scanned content. Because Mistral is reachable only by
+// explicit pin (see resolveOcrChain), this can't affect anyone who hasn't
+// deliberately chosen it — but do not add Mistral to the default auto chain,
+// or make it available via any end-user-facing control, without first adding
+// an input-size floor upstream of every provider, not just this one.
+async function runMistralOcr(imageBase64: string, mode: OcrMode): Promise<{ text: string; retries: number }> {
+  const apiKey = process.env.MISTRAL_API_KEY;
+  if (!apiKey) throw new Error("MISTRAL_API_KEY is not set");
+  const model = process.env.MISTRAL_OCR_MODEL || "mistral-ocr-latest";
 
-  const chain: Array<"kimi" | "local"> = [];
-  if (process.env.KIMI_API_KEY) chain.push("kimi");
-  chain.push("local"); // always a fallback target (may be offline in prod)
-  return chain;
+  const doFetch = () =>
+    fetch("https://api.mistral.ai/v1/ocr", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+        Accept: "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        // image_url takes the URL/data-URI directly as a string, NOT nested
+        // in {url: "..."} the way OpenAI-style vision APIs (Kimi) do.
+        document: { type: "image_url", image_url: `data:image/png;base64,${imageBase64}` },
+        include_image_base64: false,
+        include_blocks: false, // we only need pages[].markdown, not bounding boxes
+      }),
+      signal: AbortSignal.timeout(90_000),
+    });
+
+  // Same retry policy as Kimi: one retry on network error / 5xx, none on 4xx.
+  let res: Response | undefined;
+  let retries = 0;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt > 0) retries++;
+    try {
+      res = await doFetch();
+    } catch {
+      if (attempt === 1) throw withRetries(new Error("Mistral is unreachable or timed out"), retries);
+      continue;
+    }
+    if (res.ok) break;
+    if (res.status < 500 || attempt === 1) {
+      let detail = "";
+      try {
+        const errBody = await res.json();
+        // Mistral's error shape: { object: "error", message, type, param, code }
+        detail = String(errBody?.message ?? "").trim();
+      } catch {
+        /* non-JSON error body */
+      }
+      throw withRetries(
+        new Error(detail ? `Mistral OCR failed (${res.status}): ${detail}` : `Mistral OCR failed (${res.status})`),
+        retries
+      );
+    }
+  }
+
+  const data = await res!.json();
+  const rawMarkdown = String(data?.pages?.[0]?.markdown ?? "");
+  const text = mode === "basic" ? stripMarkdownSyntax(rawMarkdown) : rawMarkdown;
+  return { text, retries };
 }
 
 interface OcrAttemptLog {
-  provider: "kimi" | "local";
+  provider: OcrProviderId;
   retries: number;
   latencyMs: number;
   outcome: "success" | "empty" | "error";
@@ -315,7 +383,11 @@ async function runOcrChain(
     const attemptStart = Date.now();
     try {
       const { text: raw, retries } =
-        provider === "kimi" ? await runKimiOcr(imageBase64, mode) : await runLocalOcr(imageBase64);
+        provider === "kimi"
+          ? await runKimiOcr(imageBase64, mode)
+          : provider === "mistral"
+          ? await runMistralOcr(imageBase64, mode)
+          : await runLocalOcr(imageBase64);
       const text = stripOuterFence(raw);
       const latencyMs = Date.now() - attemptStart;
 

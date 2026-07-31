@@ -44,13 +44,40 @@ test.describe("rateLimit (in-memory backend)", () => {
 // 60/min per client, so a burst past that must start returning 429. Uses the OCR
 // bucket (action "ocr"); no other test hits the real OCR route, so this can't
 // starve them.
+//
+// Fired CONCURRENTLY, not sequentially. When Upstash is configured, each check
+// is a real network round-trip (up to 2 sequential calls per request, since
+// ocrRules() has both a per-minute and per-day rule) — 80 sequential requests
+// can take long enough to straddle the 60s fixed window, resetting the count
+// mid-test and never reaching the limit within any single window. Concurrent
+// dispatch finishes in roughly one round-trip's worth of wall time regardless
+// of which backend is active, and is arguably the more realistic model of a
+// burst anyway.
 test.describe("/api/ai rate limiting", () => {
   test("returns 429 once the OCR budget is exhausted", async ({ request }) => {
+    const responses = await Promise.all(
+      Array.from({ length: 80 }, () => request.post("/api/ai", { data: { action: "ocr" } }))
+    );
+    const limited = responses.find((res) => res.status() === 429);
+    expect(limited).toBeTruthy();
+    expect(limited!.headers()["retry-after"]).toBeTruthy();
+  });
+});
+
+// End-to-end against the REAL route, not the page.route() intercepts used by
+// tests/pdf-adobe-word.spec.ts (those never reach the server, so they can't
+// exercise this). Adobe bills per document, so its budget is much tighter
+// (default 3/min) than OCR/chat above. The check runs before the body is even
+// parsed, so no real file or Adobe credentials are needed to trip it.
+test.describe("/api/pdf/adobe-export rate limiting", () => {
+  test("returns 429 once the Adobe conversion budget is exhausted", async ({ request }) => {
     let sawLimit = false;
-    for (let i = 0; i < 80; i++) {
-      const res = await request.post("/api/ai", { data: { action: "ocr" } });
+    for (let i = 0; i < 10; i++) {
+      const res = await request.post("/api/pdf/adobe-export");
       if (res.status() === 429) {
         expect(res.headers()["retry-after"]).toBeTruthy();
+        const body = await res.json();
+        expect(body.error).toMatch(/rate limit/i);
         sawLimit = true;
         break;
       }

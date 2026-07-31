@@ -8,6 +8,7 @@ test.describe("ocrProviderLabel", () => {
   test("maps known provider ids to their vendor label", () => {
     expect(ocrProviderLabel("kimi")).toBe("Kimi Vision (Moonshot AI)");
     expect(ocrProviderLabel("local")).toBe("Unlimited-OCR (self-hosted)");
+    expect(ocrProviderLabel("mistral")).toBe("Mistral OCR");
   });
 
   test("falls back to a generic label for unknown or missing providers", () => {

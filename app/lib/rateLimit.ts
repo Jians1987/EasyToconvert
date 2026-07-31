@@ -1,9 +1,14 @@
-// Best-effort rate limiting for the paid API routes (OCR + chat).
+// Best-effort rate limiting for the paid API routes (OCR + chat + Adobe export).
 //
 // Two backends, chosen at call time:
 //   1. Upstash Redis REST  (UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN)
 //      Shared across every serverless instance — the ONLY backend that actually
 //      limits abuse on Vercel, where each invocation may be a fresh process.
+//      Manually verified against a real Upstash database: two independent
+//      `next dev` processes on different ports, both configured with the same
+//      credentials, correctly shared one counter — a second process's request
+//      pushed the first process over budget on ITS OWN next call, which is
+//      only possible if the count came from Redis, not process memory.
 //   2. In-memory sliding window (fallback)
 //      Correct only within one long-lived process (self-host / `next start` on a
 //      single box). On serverless it degrades to per-instance, so treat it as a
@@ -141,5 +146,18 @@ export function chatRules(): RateLimitRule[] {
   return [
     { limit: readIntEnv("AI_RATELIMIT_PER_MIN", 20), windowSeconds: 60 },
     { limit: readIntEnv("AI_RATELIMIT_PER_DAY", 300), windowSeconds: 86_400 },
+  ];
+}
+
+/**
+ * Adobe PDF Services bills per document conversion, not per page/request like
+ * OCR — so this budget is intentionally much tighter. A real person converting
+ * documents by hand rarely submits more than one or two a minute; the daily
+ * cap bounds worst-case exposure from a single anonymous client.
+ */
+export function adobeRules(): RateLimitRule[] {
+  return [
+    { limit: readIntEnv("ADOBE_RATELIMIT_PER_MIN", 3), windowSeconds: 60 },
+    { limit: readIntEnv("ADOBE_RATELIMIT_PER_DAY", 15), windowSeconds: 86_400 },
   ];
 }

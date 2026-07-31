@@ -1,6 +1,7 @@
 // Document OCR client. Uploads an image to /api/ai, which runs the server-side
-// provider chain (Kimi Vision first, the local Unlimited-OCR model as fallback)
-// and returns recognised text — Markdown in structured mode, plain text in basic.
+// provider chain (Kimi Vision by default, Mistral OCR available by explicit
+// pin, the local Unlimited-OCR model as fallback) and returns recognised text
+// — Markdown in structured mode, plain text in basic.
 //
 // NOTE: this is NOT on-device. Every function here uploads the image, so UI copy
 // must not describe OCR as local. See app/api/ai/route.ts for the providers.
@@ -9,7 +10,7 @@
 // this deliberately has no confidence field rather than inventing a score.
 export interface OcrResult {
   text: string;
-  /** Which backend actually produced this result ("kimi" | "local"), when the server reports it. */
+  /** Which backend actually produced this result ("kimi" | "local" | "mistral"), when the server reports it. */
   provider?: string;
   /** Set when the response looked suspicious (e.g. a likely model refusal) — surface it, don't hide it. */
   warning?: string;
@@ -22,6 +23,8 @@ export function ocrProviderLabel(provider?: string): string {
       return "Kimi Vision (Moonshot AI)";
     case "local":
       return "Unlimited-OCR (self-hosted)";
+    case "mistral":
+      return "Mistral OCR";
     default:
       return "Cloud OCR";
   }
@@ -73,7 +76,9 @@ async function imageToBase64(image: OcrImage): Promise<string> {
   });
 }
 
-export type OcrProvider = "auto" | "kimi" | "local";
+// "mistral" is reachable but not part of the server's default auto chain —
+// see resolveOcrChain in app/lib/ocrProviderChain.ts for why.
+export type OcrProvider = "auto" | "kimi" | "local" | "mistral";
 export type OcrMode = "basic" | "structured";
 
 export interface OcrParams {

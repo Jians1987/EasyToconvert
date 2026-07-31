@@ -10,9 +10,24 @@ import {
   PDFServices,
   ServicePrincipalCredentials,
 } from "@adobe/pdfservices-node-sdk";
+import { rateLimit, clientKey, adobeRules } from "@/app/lib/rateLimit";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
+
+/** Operational log line for a billed Adobe conversion. Never include the
+ *  filename, file content, or credentials — only what happened and how long
+ *  it took, so real usage can be correlated against the Adobe invoice. */
+function logAdobeExport(entry: {
+  outcome: "success" | "rate_limited" | "failure";
+  fileSizeBytes?: number;
+  latencyMs?: number;
+  error?: string;
+}) {
+  const line = JSON.stringify({ event: "adobe_export_request", ...entry });
+  if (entry.outcome === "failure") console.error(line);
+  else console.log(line);
+}
 
 const MAX_PDF_BYTES = 50 * 1024 * 1024;
 
@@ -43,7 +58,22 @@ function parseOcrLocale(value: FormDataEntryValue | null): ExportOCRLocale {
 }
 
 export async function POST(request: Request) {
+  const startedAt = Date.now();
   try {
+    // Checked before touching the body or Adobe at all — this is the only
+    // billed-per-document endpoint in the app, so a blocked request should
+    // cost nothing.
+    const verdict = await rateLimit(clientKey(request), adobeRules());
+    if (!verdict.ok) {
+      logAdobeExport({ outcome: "rate_limited" });
+      return NextResponse.json(
+        {
+          error: `Rate limit reached for Adobe High Quality conversion — try again in about ${verdict.retryAfterSeconds}s. Switch to the In Browser engine for unlimited conversions, or run self-hosted with your own Adobe key.`,
+        },
+        { status: 429, headers: { "Retry-After": String(verdict.retryAfterSeconds) } }
+      );
+    }
+
     const formData = await request.formData();
     const file = formData.get("file");
 
@@ -79,6 +109,8 @@ export async function POST(request: Request) {
     const streamAsset = await pdfServices.getContent({ asset: response.result.asset });
     const outputBuffer = await streamToBuffer(streamAsset.readStream);
 
+    logAdobeExport({ outcome: "success", fileSizeBytes: file.size, latencyMs: Date.now() - startedAt });
+
     return new Response(new Uint8Array(outputBuffer), {
       headers: {
         "Content-Type": MimeType.DOCX,
@@ -89,6 +121,7 @@ export async function POST(request: Request) {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Adobe PDF conversion failed.";
     const status = message.includes("credentials") ? 503 : 502;
+    logAdobeExport({ outcome: "failure", latencyMs: Date.now() - startedAt, error: message.slice(0, 300) });
     return NextResponse.json({ error: message }, { status });
   }
 }
