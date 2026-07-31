@@ -87,6 +87,36 @@ const parsePageSelection = (value: string, total: number): number[] => {
   return Array.from(pages);
 };
 
+/**
+ * Adobe PDF Services export. Unlike every other PDF→Word path this uploads the
+ * file to Adobe, so it is opt-in and labelled as such in the UI.
+ */
+async function convertPdfToDocxWithAdobe(file: File, ocrLocale = "en-US"): Promise<Blob> {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("ocrLocale", ocrLocale);
+
+  const response = await fetch("/api/pdf/adobe-export", { method: "POST", body: formData });
+
+  if (!response.ok) {
+    let message = "Adobe PDF Services conversion failed.";
+    try {
+      const payload = await response.json();
+      if (payload?.error) message = payload.error;
+    } catch {
+      const text = await response.text();
+      if (text) message = text.slice(0, 200);
+    }
+    if (response.status === 503) {
+      message =
+        "Adobe High Quality isn't configured on this server. Set PDF_SERVICES_CLIENT_ID and PDF_SERVICES_CLIENT_SECRET, or switch back to the in-browser engine.";
+    }
+    throw new Error(message);
+  }
+
+  return response.blob();
+}
+
 const tableFromOcrText = (text: string): string[][] =>
   text
     .split("\n")
@@ -255,6 +285,9 @@ export function PdfPageClient() {
   const [splitPages, setSplitPages] = useState("1");
   const [totalPages, setTotalPages] = useState(0);
   const [docFidelity, setDocFidelity] = useState<"layout" | "exact" | "hybrid" | "text" | "image">("layout");
+  // Defaults to the in-browser engine: it keeps the file on the device, which
+  // is the promise the rest of the site makes. Adobe is opt-in.
+  const [docEngine, setDocEngine] = useState<"browser" | "adobe">("browser");
   const [ocrEnabled, setOcrEnabled] = useState(true);
   const [ocrEngine, setOcrEngine] = useState<"unlimited">("unlimited");
 
@@ -390,7 +423,7 @@ export function PdfPageClient() {
     merge: "Combine multiple PDF files into one document. Set an optional password to encrypt the output.",
     split: "Extract specific pages into a separate PDF file.",
     rotate: "Rotate all pages or a specific set of pages by 90°, 180°, or 270°.",
-    "to-doc": "Convert a PDF into a Word Document (.docx). Pick an output mode below — everything runs in your browser, and scanned pages can be sent for OCR if you enable it.",
+    "to-doc": "Convert a PDF into a Word Document (.docx). Choose a conversion engine below — the in-browser engine keeps the file on your device, and Adobe generally gives the most faithful result but uploads it.",
     "to-excel": "Extract tables from a PDF into an Excel Spreadsheet (.xlsx). Uses Microsoft Table Transformer (on-device) or Kimi Vision Cloud AI.",
     "to-image": "Render each page of a PDF as a high-quality JPG image you can save individually.",
     edit: "Draw, annotate, add text, stamps, signatures, images, and shapes directly on PDF pages. Reorder, rotate, delete, and export.",
@@ -814,6 +847,25 @@ export function PdfPageClient() {
             { imageScale: imgScale, ocrFallback } satisfies ConvertDocxOptions
           );
         };
+
+        if (docEngine === "adobe") {
+          setTatrProgressLabel("Uploading to Adobe PDF Services…");
+          setTatrProgressPct(20);
+          blob = await convertPdfToDocxWithAdobe(file);
+          setTatrProgressLabel("Conversion complete");
+          setTatrProgressPct(100);
+
+          const adobeUrl = URL.createObjectURL(blob);
+          setDownloadUrl(adobeUrl);
+          addHistoryItem({
+            fileName: `${file.name.split(".")[0] || "document"}.docx`,
+            fileSize: blob.size,
+            toolType: "pdf-to-doc",
+            status: "success",
+            downloadUrl: adobeUrl,
+          });
+          return;
+        }
 
         let isScannedPdf = false;
         if (docFidelity !== "image") {
@@ -1268,7 +1320,51 @@ export function PdfPageClient() {
 
             {mode === "to-doc" && (
               <div className="space-y-3">
-                {/* Output Mode */}
+                {/* Conversion engine */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] uppercase font-bold text-slate-400">Conversion Engine</label>
+                  <div className="flex flex-wrap gap-2">
+                    {([
+                      { id: "browser", label: "In Browser", hint: "Private" },
+                      { id: "adobe", label: "Adobe High Quality", hint: "Uploads" },
+                    ] as const).map((engine) => (
+                      <button
+                        key={engine.id}
+                        onClick={() => setDocEngine(engine.id)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                          docEngine === engine.id
+                            ? "bg-indigo-600 text-white"
+                            : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200"
+                        }`}
+                      >
+                        {engine.label}
+                        <span className="ml-1.5 opacity-70 font-normal">· {engine.hint}</span>
+                      </button>
+                    ))}
+                  </div>
+                  {docEngine === "adobe" ? (
+                    <div className="p-2.5 rounded-xl border border-amber-500/30 bg-amber-50/50 dark:bg-amber-950/10 space-y-1">
+                      <p className="text-[11px] text-amber-700 dark:text-amber-400 leading-relaxed">
+                        <strong>Your PDF is uploaded to Adobe PDF Services</strong> and converted there. It
+                        usually gives the most faithful editable Word output, especially for complex layouts and
+                        scanned pages, but the file leaves your device. Switch to <em>In Browser</em> to keep it
+                        local.
+                      </p>
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                        Adobe picks its own layout strategy, so the output modes below don&rsquo;t apply.
+                        Password-protected PDFs aren&rsquo;t supported on this path.
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="text-[10px] text-slate-400 leading-relaxed">
+                      Runs entirely on your device — the file never leaves the browser. Choose how faithful the
+                      output should be below.
+                    </p>
+                  )}
+                </div>
+
+                {/* Output Mode — browser engine only */}
+                {docEngine === "browser" && (
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
                     <label className="text-[10px] uppercase font-bold text-slate-400">Output Mode</label>
@@ -1308,9 +1404,10 @@ export function PdfPageClient() {
                     {docFidelity === "text" && "Extracts raw text in reading order. Fastest option, no formatting preserved."}
                   </p>
                 </div>
+                )}
 
-                {/* OCR Settings — shown for layout & text modes */}
-                {docFidelity !== "image" && (
+                {/* OCR Settings — browser engine, non-image modes only */}
+                {docEngine === "browser" && docFidelity !== "image" && (
                   <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-3 space-y-2 bg-slate-50/50 dark:bg-slate-900/30">
                     <div className="flex items-center justify-between">
                       <label className="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1">

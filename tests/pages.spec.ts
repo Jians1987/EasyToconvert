@@ -218,8 +218,18 @@ test.describe("AI tools", () => {
     await expect(page.getByRole("button", { name: /Run AI summarize/i })).toBeDisabled();
   });
 
-  test("Image OCR extracts text from an image on-device (Tesseract.js)", async ({ page }) => {
-    test.setTimeout(200000); // first run downloads the OCR model from CDN
+  // OCR is not on-device: it posts to /api/ai, which proxies to the
+  // Unlimited-OCR server (127.0.0.1:10000 by default). Skip rather than fail
+  // when that server isn't running, so a missing local dependency doesn't look
+  // like a regression.
+  test("Image OCR extracts text from an image via the OCR service", async ({ page, request }) => {
+    const serverUp = await request
+      .get("http://127.0.0.1:10000/health", { timeout: 3000 })
+      .then((r) => r.ok())
+      .catch(() => false);
+    test.skip(!serverUp, "Unlimited-OCR server is not running on 127.0.0.1:10000");
+
+    test.setTimeout(200000);
     await page.goto("/ai");
     await page.getByRole("button", { name: "Image OCR" }).click();
     // draw a clear text image and feed it to the dropzone's file input
