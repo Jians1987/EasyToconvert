@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import http from "node:http";
 import https from "node:https";
+import { rateLimit, clientKey, ocrRules, chatRules } from "@/app/lib/rateLimit";
+import { stripOuterFence, looksLikeRefusal } from "@/app/lib/ocrMarkdown";
 
 function postJsonNative(
   urlStr: string,
@@ -127,6 +129,242 @@ function resolveChatProviders(): ChatProvider[] {
   return providers;
 }
 
+// ── Document OCR (image → Markdown) ─────────────────────────────────────────
+// Kimi Vision is the primary provider; the local Unlimited-OCR server is an
+// optional fallback for self-hosters running the model. Output feeds
+// parseMarkdownToDocxElements in pdfToDocx, so Structured mode must return
+// GitHub-Flavored Markdown, not flat text.
+type OcrMode = "structured" | "basic";
+
+const OCR_PROMPTS: Record<OcrMode, string> = {
+  structured:
+    "You are an OCR engine. Transcribe this document page into clean GitHub-Flavored Markdown. " +
+    "Preserve reading order. Use #/##/### for headings that are visually headings. Render every table " +
+    "as a GFM pipe table with a header separator row, keeping all rows and columns. Use - or 1. for lists, " +
+    "**bold** and *italic* where the text is styled, and $...$ for mathematical notation. Keep blank lines " +
+    "between paragraphs. Do NOT wrap the whole answer in a code fence and do NOT add any commentary. " +
+    "If the page is blank, output nothing. Output only the transcription.",
+  basic:
+    "You are an OCR engine. Transcribe all text from this image in natural reading order as plain text. " +
+    "Preserve line breaks between lines and paragraphs. Do not add markdown, commentary, or code fences.",
+};
+
+function ocrModeFromBody(value: unknown): OcrMode {
+  return value === "basic" ? "basic" : "structured";
+}
+
+/** Tag a thrown error with how many retries were already spent, so the
+ *  catch-site logger can report an accurate count instead of assuming 0. */
+function withRetries(error: Error, retries: number): Error {
+  (error as Error & { retries?: number }).retries = retries;
+  return error;
+}
+
+async function runKimiOcr(imageBase64: string, mode: OcrMode): Promise<{ text: string; retries: number }> {
+  const apiKey = process.env.KIMI_API_KEY;
+  if (!apiKey) throw new Error("KIMI_API_KEY is not set");
+  const base = (process.env.KIMI_BASE_URL || "https://api.kimi.com/coding/v1").replace(/\/+$/, "");
+  const model = process.env.KIMI_VISION_MODEL || "k3";
+
+  const doFetch = () =>
+    fetch(`${base}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+        Accept: "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: OCR_PROMPTS[mode] },
+              { type: "image_url", image_url: { url: `data:image/png;base64,${imageBase64}` } },
+            ],
+          },
+        ],
+        temperature: 1, // k3 is reasoning-only and rejects other values
+        max_tokens: 8000,
+        stream: false,
+      }),
+      signal: AbortSignal.timeout(90_000),
+    });
+
+  // One retry on network error / 5xx before the caller falls to the next provider.
+  // Retry count is attached to thrown errors too (via withRetries) so the final
+  // failure log still reports how many attempts were actually made.
+  let res: Response | undefined;
+  let retries = 0;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt > 0) retries++;
+    try {
+      res = await doFetch();
+    } catch {
+      if (attempt === 1) throw withRetries(new Error("Kimi is unreachable or timed out"), retries);
+      continue;
+    }
+    if (res.ok) break;
+    if (res.status < 500 || attempt === 1) {
+      let detail = "";
+      try {
+        const errBody = await res.json();
+        detail = String(errBody?.error?.message ?? errBody?.error ?? "").trim();
+      } catch {
+        /* non-JSON error body */
+      }
+      throw withRetries(
+        new Error(detail ? `Kimi OCR failed (${res.status}): ${detail}` : `Kimi OCR failed (${res.status})`),
+        retries
+      );
+    }
+  }
+
+  const data = await res!.json();
+  return { text: String(data.choices?.[0]?.message?.content ?? ""), retries };
+}
+
+async function runLocalOcr(imageBase64: string): Promise<{ text: string; retries: number }> {
+  const serverUrl = process.env.UNLIMITED_OCR_SERVER_URL || "http://127.0.0.1:10000";
+  const apiKey = process.env.UNLIMITED_OCR_API_KEY || "";
+  const headers: Record<string, string> = {};
+  if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
+
+  const data = await postJsonNative(
+    `${serverUrl}/v1/chat/completions`,
+    {
+      model: "Unlimited-OCR",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "<image>document parsing." },
+            { type: "image_url", image_url: { url: `data:image/png;base64,${imageBase64}` } },
+          ],
+        },
+      ],
+      temperature: 0,
+      skip_special_tokens: false,
+      stream: false,
+      images_config: { image_mode: "gundam" },
+    },
+    headers,
+    180_000
+  );
+  // No retry logic on this path today — always 0. If retries are added here
+  // later, thread the real count through instead of leaving this hardcoded.
+  return { text: String(data.choices?.[0]?.message?.content ?? ""), retries: 0 };
+}
+
+/** Ordered provider chain. `provider`/OCR_PROVIDER pins it; otherwise Kimi first
+ *  when configured, local model as a fallback for self-hosters. */
+function resolveOcrChain(requested?: string): Array<"kimi" | "local"> {
+  const pin = (requested || process.env.OCR_PROVIDER || "").trim().toLowerCase();
+  if (pin === "kimi") return ["kimi"];
+  if (pin === "local") return ["local"];
+
+  const chain: Array<"kimi" | "local"> = [];
+  if (process.env.KIMI_API_KEY) chain.push("kimi");
+  chain.push("local"); // always a fallback target (may be offline in prod)
+  return chain;
+}
+
+interface OcrAttemptLog {
+  provider: "kimi" | "local";
+  retries: number;
+  latencyMs: number;
+  outcome: "success" | "empty" | "error";
+  /** Truncated Error.message only — never OCR text, image data, or the API key. */
+  error?: string;
+}
+
+/** Operational log line: what happened, not what was in the document. Never
+ *  include imageBase64, the transcribed text, or any API key/header here. */
+function logOcrRequest(entry: {
+  mode: OcrMode;
+  requestedProvider: string;
+  chain: string[];
+  attempts: OcrAttemptLog[];
+  outcome: "success" | "warning" | "failure";
+  finalProvider?: string;
+  warning?: string;
+  totalLatencyMs: number;
+}) {
+  const line = JSON.stringify({ event: "ocr_request", ...entry });
+  if (entry.outcome === "failure") console.error(line);
+  else console.log(line);
+}
+
+async function runOcrChain(
+  imageBase64: string,
+  mode: OcrMode,
+  requestedProvider?: string
+): Promise<{ text: string; provider: string; warning?: string }> {
+  const chain = resolveOcrChain(requestedProvider);
+  const attempts: OcrAttemptLog[] = [];
+  const startedAt = Date.now();
+  // Surface the FIRST provider's failure, not the last. The chain always ends
+  // with "local" as an optional fallback for self-hosters — when it isn't
+  // running, its ECONNREFUSED is meaningless noise to a user relying on the
+  // configured cloud provider. The first attempt is the one that was actually
+  // supposed to work, so its error is the actionable one.
+  let firstError: unknown;
+
+  for (const provider of chain) {
+    const attemptStart = Date.now();
+    try {
+      const { text: raw, retries } =
+        provider === "kimi" ? await runKimiOcr(imageBase64, mode) : await runLocalOcr(imageBase64);
+      const text = stripOuterFence(raw);
+      const latencyMs = Date.now() - attemptStart;
+
+      if (!text) {
+        if (firstError === undefined) firstError = new Error(`${provider} returned no text`);
+        attempts.push({ provider, retries, latencyMs, outcome: "empty" });
+        continue; // empty → try the next provider rather than emit a blank doc
+      }
+
+      const warning = looksLikeRefusal(text)
+        ? "The OCR model may have returned a refusal instead of a transcription — check the output."
+        : undefined;
+      attempts.push({ provider, retries, latencyMs, outcome: "success" });
+      logOcrRequest({
+        mode,
+        requestedProvider: requestedProvider || "auto",
+        chain,
+        attempts,
+        outcome: warning ? "warning" : "success",
+        finalProvider: provider,
+        warning,
+        totalLatencyMs: Date.now() - startedAt,
+      });
+      return { text, provider, warning };
+    } catch (err) {
+      if (firstError === undefined) firstError = err;
+      const message = err instanceof Error ? err.message : String(err);
+      const retries = (err as { retries?: number })?.retries ?? 0;
+      attempts.push({
+        provider,
+        retries,
+        latencyMs: Date.now() - attemptStart,
+        outcome: "error",
+        error: message.slice(0, 300),
+      });
+    }
+  }
+
+  logOcrRequest({
+    mode,
+    requestedProvider: requestedProvider || "auto",
+    chain,
+    attempts,
+    outcome: "failure",
+    totalLatencyMs: Date.now() - startedAt,
+  });
+  throw firstError instanceof Error ? firstError : new Error("No OCR provider is available");
+}
+
 export const maxDuration = 120;
 
 export async function POST(req: Request) {
@@ -141,12 +379,27 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
     }
 
-    const { action, prompt, systemPrompt, imageBase64 } = body as Record<string, unknown>;
+    const { action, prompt, systemPrompt, imageBase64, provider, mode } = body as Record<string, unknown>;
     if (typeof action !== "string") {
       return NextResponse.json({ error: "Missing action" }, { status: 400 });
     }
 
-    if (action === "unlimited-ocr") {
+    // Rate-limit the actions that cost money (OCR + vision + chat). The health
+    // check and anything else fall through untouched.
+    const OCR_ACTIONS = new Set(["unlimited-ocr", "document-ocr", "ocr", "vision-ocr"]);
+    if (OCR_ACTIONS.has(action) || action === "deepseek-chat") {
+      const verdict = await rateLimit(clientKey(req), action === "deepseek-chat" ? chatRules() : ocrRules());
+      if (!verdict.ok) {
+        return NextResponse.json(
+          {
+            error: `Rate limit reached — try again in about ${verdict.retryAfterSeconds}s. For very large documents or higher limits, run self-hosted with your own key.`,
+          },
+          { status: 429, headers: { "Retry-After": String(verdict.retryAfterSeconds) } }
+        );
+      }
+    }
+
+    if (action === "unlimited-ocr" || action === "document-ocr" || action === "ocr") {
       if (typeof imageBase64 !== "string" || !imageBase64) {
         return NextResponse.json({ error: "Missing imageBase64" }, { status: 400 });
       }
@@ -154,69 +407,38 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "Image is too large" }, { status: 413 });
       }
 
-      const serverUrl = process.env.UNLIMITED_OCR_SERVER_URL || "http://127.0.0.1:10000";
-      const apiKey = process.env.UNLIMITED_OCR_API_KEY || "";
-
+      const requestedProvider = typeof provider === "string" ? provider : undefined;
       try {
-        const headers: Record<string, string> = {};
-        if (apiKey) {
-          headers["Authorization"] = `Bearer ${apiKey}`;
-        }
-
-        const data = await postJsonNative(
-          `${serverUrl}/v1/chat/completions`,
-          {
-            model: "Unlimited-OCR",
-            messages: [
-              {
-                role: "user",
-                content: [
-                  { type: "text", text: "<image>document parsing." },
-                  { type: "image_url", image_url: { url: `data:image/png;base64,${imageBase64}` } },
-                ],
-              },
-            ],
-            temperature: 0,
-            skip_special_tokens: false,
-            stream: false,
-            images_config: { image_mode: "gundam" },
-          },
-          headers,
-          180_000
-        );
-
-        const text = data.choices?.[0]?.message?.content ?? "";
-        return NextResponse.json({ text: String(text).trim() });
+        const result = await runOcrChain(imageBase64, ocrModeFromBody(mode), requestedProvider);
+        return NextResponse.json({
+          text: result.text,
+          provider: result.provider,
+          mode: ocrModeFromBody(mode),
+          ...(result.warning ? { warning: result.warning } : {}),
+        });
       } catch (err: unknown) {
-        console.error("Unlimited-OCR endpoint fetch failed:", err);
         const detail = err instanceof Error ? err.message : String(err);
         const code = (err as { code?: string })?.code || "";
-        const statusCode = (err as { statusCode?: number })?.statusCode;
-
-        // Case 1: the server never answered — not running / wrong URL / still loading the model.
         const unreachable =
-          statusCode === undefined &&
-          (code === "ECONNREFUSED" ||
-            code === "ECONNRESET" ||
-            code === "ENOTFOUND" ||
-            /ECONNREFUSED|ECONNRESET|ENOTFOUND|timed out/i.test(detail));
+          code === "ECONNREFUSED" ||
+          code === "ECONNRESET" ||
+          code === "ENOTFOUND" ||
+          /ECONNREFUSED|ECONNRESET|ENOTFOUND|timed out|unreachable/i.test(detail);
 
-        if (unreachable) {
+        // Kimi not configured and the only remaining fallback (local server) is
+        // down: tell the operator how to fix it rather than emit a bare 502.
+        if (!process.env.KIMI_API_KEY && unreachable) {
           return NextResponse.json(
             {
-              error: `Can't reach the Unlimited-OCR server at ${serverUrl}. Start it with start_server.bat (or python server.py) and wait until it finishes loading the model, then try again. (${detail})`,
+              error: `No OCR provider is available. Set KIMI_API_KEY for cloud OCR, or start the local Unlimited-OCR server. (${detail})`,
             },
             { status: 503 }
           );
         }
 
-        // Case 2: the server answered but failed to process the page — show its real error.
-        return NextResponse.json(
-          {
-            error: `Unlimited-OCR couldn't process this page: ${detail}`,
-          },
-          { status: 502 }
-        );
+        // runOcrChain already emitted a structured ocr_request failure log —
+        // avoid a second, unstructured console.error for the same event.
+        return NextResponse.json({ error: `OCR couldn't process this page: ${detail}` }, { status: 502 });
       }
     }
 

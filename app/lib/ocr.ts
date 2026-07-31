@@ -1,15 +1,30 @@
-// Unlimited OCR (Baidu Inc.) — vision-language document parsing model.
-// Replaces the legacy Tesseract engine for all OCR operations in EasyToconvert.
+// Document OCR client. Uploads an image to /api/ai, which runs the server-side
+// provider chain (Kimi Vision first, the local Unlimited-OCR model as fallback)
+// and returns recognised text — Markdown in structured mode, plain text in basic.
 //
-// NOTE: this runs server-side. Every function here uploads the image to
-// /api/ai, which forwards it to the Unlimited-OCR server — nothing in this
-// module is on-device, so UI copy must not describe OCR as local.
+// NOTE: this is NOT on-device. Every function here uploads the image, so UI copy
+// must not describe OCR as local. See app/api/ai/route.ts for the providers.
 
-// The Unlimited-OCR endpoint returns recognised text only — it reports no
-// per-page confidence, so this deliberately has no confidence field rather
-// than inventing a score to display.
+// The OCR endpoint returns recognised text only — no per-page confidence — so
+// this deliberately has no confidence field rather than inventing a score.
 export interface OcrResult {
   text: string;
+  /** Which backend actually produced this result ("kimi" | "local"), when the server reports it. */
+  provider?: string;
+  /** Set when the response looked suspicious (e.g. a likely model refusal) — surface it, don't hide it. */
+  warning?: string;
+}
+
+/** Human-readable label for a provider id returned by the OCR route. */
+export function ocrProviderLabel(provider?: string): string {
+  switch (provider) {
+    case "kimi":
+      return "Kimi Vision (Moonshot AI)";
+    case "local":
+      return "Unlimited-OCR (self-hosted)";
+    default:
+      return "Cloud OCR";
+  }
 }
 
 type OcrImage = string | HTMLCanvasElement | File | Blob;
@@ -58,33 +73,38 @@ async function imageToBase64(image: OcrImage): Promise<string> {
   });
 }
 
+export type OcrProvider = "auto" | "kimi" | "local";
+export type OcrMode = "basic" | "structured";
+
+export interface OcrParams {
+  image: OcrImage;
+  /** Which backend to use. "auto" (default) lets the server pick per its config. */
+  provider?: OcrProvider;
+  /** "structured" (default) returns Markdown; "basic" returns plain text. */
+  mode?: OcrMode;
+  onProgress?: (percent: number) => void;
+}
+
 /**
- * Recognize text using Baidu Unlimited-OCR model.
- * State-of-the-art multi-page & structural document parsing model (Markdown, LaTeX, Tables).
+ * Run OCR on an image via the server-side provider chain. Structured mode
+ * returns GitHub-Flavored Markdown (headings, tables, lists); basic mode returns
+ * plain text. The image is uploaded to /api/ai — this is not on-device.
  */
-export async function ocrImageWithUnlimitedOcr(
-  image: OcrImage,
-  onProgress?: (percent: number) => void
-): Promise<OcrResult> {
-  if (onProgress) onProgress(10);
+export async function ocrImage(params: OcrParams): Promise<OcrResult> {
+  const { image, provider = "auto", mode = "structured", onProgress } = params;
 
+  onProgress?.(10);
   const b64 = await imageToBase64(image);
-  if (onProgress) onProgress(30);
+  onProgress?.(40);
 
-  if (onProgress) onProgress(60);
   const res = await fetch("/api/ai", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      action: "unlimited-ocr",
-      imageBase64: b64,
-    }),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "document-ocr", imageBase64: b64, provider, mode }),
   });
 
   if (!res.ok) {
-    let errMsg = `Unlimited OCR Error (${res.status})`;
+    let errMsg = `OCR request failed (${res.status})`;
     try {
       const errJson = await res.json();
       if (errJson.error) errMsg = errJson.error;
@@ -92,23 +112,23 @@ export async function ocrImageWithUnlimitedOcr(
       const errText = await res.text().catch(() => "");
       if (errText) errMsg = errText;
     }
-    console.error("Unlimited OCR proxy failed:", errMsg);
+    console.error("OCR proxy failed:", errMsg);
     throw new Error(errMsg);
   }
 
   const data = await res.json();
-  if (onProgress) onProgress(100);
-
-  return { text: data.text || "" };
+  onProgress?.(100);
+  return { text: data.text || "", provider: data.provider, warning: data.warning };
 }
 
 /**
- * Main OCR entry point for EasyToconvert.
- * Uses Baidu Unlimited-OCR engine by default.
+ * Back-compat wrapper. The existing callers (pdfToDocx, tableExtractor, the AI
+ * page, the PDF page) pass (image, onProgress) and expect structured Markdown,
+ * so keep this thin delegate rather than changing all four call sites.
  */
-export async function ocrImage(
+export async function ocrImageWithUnlimitedOcr(
   image: OcrImage,
   onProgress?: (percent: number) => void
 ): Promise<OcrResult> {
-  return ocrImageWithUnlimitedOcr(image, onProgress);
+  return ocrImage({ image, onProgress, provider: "auto", mode: "structured" });
 }

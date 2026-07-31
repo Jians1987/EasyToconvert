@@ -4,7 +4,7 @@ import React, { useState } from "react";
 import ToolLayout from "@/components/ToolLayout";
 import Dropzone from "@/components/Dropzone";
 import { useConversions } from "@/app/providers";
-import { ocrImage, ocrImageWithUnlimitedOcr, looksScanned } from "@/app/lib/ocr";
+import { ocrImageWithUnlimitedOcr, looksScanned, ocrProviderLabel } from "@/app/lib/ocr";
 import { Sparkles, Star, BrainCircuit, Key, Send, FileText, Info, ScanText } from "lucide-react";
 
 type AiMode = "summarize" | "explain" | "translate" | "ocr";
@@ -177,6 +177,7 @@ export function AiPageClient() {
 
         let extractedText = "";
         let ocrPagesUsed = 0;
+        let ocrProviderUsed: string | undefined;
         for (let i = 1; i <= numPages; i++) {
           const page = await pdf.getPage(i);
           const textContent = await page.getTextContent();
@@ -218,10 +219,11 @@ export function AiPageClient() {
             const ctx = canvas.getContext("2d");
             if (ctx) {
               await page.render({ canvasContext: ctx, viewport }).promise;
-              const { text: ocrText } = await ocrImageWithUnlimitedOcr(canvas, setOcrProgress);
+              const { text: ocrText, provider } = await ocrImageWithUnlimitedOcr(canvas, setOcrProgress);
 
               if (ocrText.trim()) {
                 ocrPagesUsed++;
+                ocrProviderUsed = provider;
                 extractedText += `\n\n--- Page ${i} (OCR) ---\n\n${ocrText}`;
                 continue;
               }
@@ -234,7 +236,7 @@ export function AiPageClient() {
         setOcrStatus("");
 
         const ocrNote = ocrPagesUsed > 0
-          ? `\n\n**${ocrPagesUsed} scanned page${ocrPagesUsed > 1 ? "s were" : " was"} read with Baidu Unlimited-OCR.**`
+          ? `\n\n**${ocrPagesUsed} scanned page${ocrPagesUsed > 1 ? "s were" : " was"} read with ${ocrProviderLabel(ocrProviderUsed)}.**`
           : "";
         
         setOcrStatus("AI is thinking (reading document)...");
@@ -251,11 +253,12 @@ export function AiPageClient() {
           setProcessing(false);
           return;
         }
-        setOcrStatus("Recognizing text with Unlimited OCR…");
-        const { text: ocrText } = await ocrImageWithUnlimitedOcr(selectedFile, setOcrProgress);
+        setOcrStatus("Recognizing text…");
+        const { text: ocrText, provider, warning } = await ocrImageWithUnlimitedOcr(selectedFile, setOcrProgress);
         setOcrStatus("");
 
-        result = `### 🔎 Image OCR — Extracted Text\n\n**File**: ${selectedFile.name}\n**Engine**: Baidu Unlimited-OCR (Structural Markdown & LaTeX)\n\n---\n\n${ocrText || "_No readable text was found in this image._"}`;
+        const warningNote = warning ? `\n\n> ⚠️ ${warning}` : "";
+        result = `### 🔎 Image OCR — Extracted Text\n\n**File**: ${selectedFile.name}\n**Engine**: ${ocrProviderLabel(provider)}${warningNote}\n\n---\n\n${ocrText || "_No readable text was found in this image._"}`;
 
       } else if (mode === "explain") {
         if (!inputText.trim()) {
@@ -438,12 +441,13 @@ export function AiPageClient() {
             )}
 
             {(mode === "summarize" || mode === "ocr") && (
-              <div className="p-3 rounded-xl border border-emerald-500/30 bg-emerald-50/50 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-300 text-xs font-medium flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-emerald-500 shrink-0" />
+              <div className="p-3 rounded-xl border border-amber-500/30 bg-amber-50/50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-400 text-xs font-medium flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
                 <div>
-                  <p className="font-bold">Engine: Baidu Unlimited-OCR</p>
+                  <p className="font-bold">Cloud OCR — uploads the image</p>
                   <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
-                    One-shot long-horizon parsing for structural Markdown, LaTeX formulas, & complex table layouts.
+                    Scanned pages and images are sent to Kimi Vision (Moonshot AI) by default for structural
+                    Markdown, table, and layout recognition.
                   </p>
                 </div>
               </div>

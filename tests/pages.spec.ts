@@ -218,27 +218,32 @@ test.describe("AI tools", () => {
     await expect(page.getByRole("button", { name: /Run AI summarize/i })).toBeDisabled();
   });
 
-  // OCR is not on-device: it posts to /api/ai, which proxies to the
-  // Unlimited-OCR server (127.0.0.1:10000 by default). Skip rather than fail
-  // when that server isn't running, so a missing local dependency doesn't look
-  // like a regression.
-  test("Image OCR extracts text from an image via the OCR service", async ({ page, request }) => {
-    const serverUp = await request
-      .get("http://127.0.0.1:10000/health", { timeout: 3000 })
-      .then((r) => r.ok())
-      .catch(() => false);
-    test.skip(!serverUp, "Unlimited-OCR server is not running on 127.0.0.1:10000");
+  // OCR is not on-device: the client posts to /api/ai, which runs the server
+  // provider chain (Kimi → local). Stub the route so the test is deterministic
+  // and needs no live provider, and assert the client uses the document-ocr
+  // action and renders the returned Markdown.
+  test("Image OCR posts document-ocr and renders the returned text", async ({ page }) => {
+    let sawAction = "";
+    await page.route("**/api/ai", async (route) => {
+      try {
+        sawAction = (route.request().postDataJSON() as { action?: string }).action ?? "";
+      } catch {
+        /* ignore non-JSON */
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ text: "# Invoice\n\nHELLO WORLD from OCR", provider: "kimi", mode: "structured" }),
+      });
+    });
 
-    test.setTimeout(200000);
     await page.goto("/ai");
     await page.getByRole("button", { name: "Image OCR" }).click();
-    // draw a clear text image and feed it to the dropzone's file input
+    // Any image works — the response is stubbed; we just need the flow to run.
     await page.evaluate(async () => {
-      const c = document.createElement("canvas"); c.width = 640; c.height = 200;
+      const c = document.createElement("canvas"); c.width = 320; c.height = 120;
       const ctx = c.getContext("2d")!;
-      ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, 640, 200);
-      ctx.fillStyle = "#000000"; ctx.font = "bold 72px Arial";
-      ctx.fillText("HELLO WORLD", 30, 130);
+      ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, 320, 120);
       const blob: Blob = await new Promise((r) => c.toBlob((b) => r(b!), "image/png"));
       const file = new File([blob], "text.png", { type: "image/png" });
       const dt = new DataTransfer(); dt.items.add(file);
@@ -247,9 +252,16 @@ test.describe("AI tools", () => {
       input.dispatchEvent(new Event("change", { bubbles: true }));
     });
     await page.getByRole("button", { name: /Extract Text \(OCR\)/i }).click();
-    await page.getByText(/Extracted Text/i).waitFor({ timeout: 180000 });
-    const out = (await page.locator(".prose").innerText()).toUpperCase();
-    expect(out).toContain("HELLO");
+    await page.getByText(/Extracted Text/i).waitFor({ timeout: 30000 });
+
+    const out = await page.locator(".prose").innerText();
+    expect(out.toUpperCase()).toContain("HELLO");
+    expect(sawAction).toBe("document-ocr");
+    // Engine label must reflect the provider the route actually reported, not a
+    // hardcoded vendor name — this regressed once already (stale "Baidu
+    // Unlimited-OCR" text after the Kimi rollout).
+    expect(out).toContain("Kimi Vision (Moonshot AI)");
+    expect(out).not.toContain("Baidu");
   });
 });
 

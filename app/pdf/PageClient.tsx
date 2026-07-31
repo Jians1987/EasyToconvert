@@ -4,7 +4,7 @@ import React, { useState, useMemo, useEffect, useRef } from "react";
 import ToolLayout from "@/components/ToolLayout";
 import Dropzone from "@/components/Dropzone";
 import { useConversions } from "@/app/providers";
-import { ocrImage, ocrImageWithUnlimitedOcr } from "@/app/lib/ocr";
+import { ocrImageWithUnlimitedOcr } from "@/app/lib/ocr";
 import { convertPdfToDocx, type DocxProgress, type ConvertDocxOptions } from "@/app/lib/pdfToDocx";
 import { extractPdfText } from "@/app/lib/pdfTextExtractor";
 import { convertPdfToXlsx, type XlsxProgress, type TableEngine } from "@/app/lib/pdfToXlsx";
@@ -1429,19 +1429,18 @@ export function PdfPageClient() {
                     {ocrEnabled && (
                       <div className="space-y-2">
                         <p className="text-[10px] text-slate-500 leading-relaxed">
-                          Pages with no embedded text are automatically parsed using <strong>Baidu Unlimited-OCR</strong> for state-of-the-art structural Markdown, LaTeX formulas, and table detection.
+                          Pages with no embedded text are automatically sent to a cloud OCR service for text,
+                          table, and structure recognition.
                         </p>
-                        <div className="p-2.5 rounded-xl border border-emerald-500/30 bg-emerald-50/50 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-300 text-[11px] font-medium space-y-1">
+                        <div className="p-2.5 rounded-xl border border-amber-500/30 bg-amber-50/50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-400 text-[11px] font-medium space-y-1">
                           <div className="flex items-center gap-1.5 font-semibold">
-                            <Sparkles className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                            <span>Engine: Baidu Unlimited-OCR (`http://127.0.0.1:10000`)</span>
+                            <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                            <span>Heads up: this uploads an image of each scanned page</span>
                           </div>
                           <p className="text-[10px] text-slate-500 dark:text-slate-400">
-                            If you encounter error 503, run the local server command:
+                            Uses Kimi Vision (Moonshot AI) by default. Turn this off to skip OCR and keep the
+                            document fully on your device — scanned pages will be left blank instead.
                           </p>
-                          <code className="block text-[10px] font-mono bg-white/80 dark:bg-slate-900/80 p-1.5 rounded border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 select-all">
-                            python server.py
-                          </code>
                         </div>
                       </div>
                     )}
