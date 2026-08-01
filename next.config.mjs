@@ -47,6 +47,23 @@ const nextConfig = {
       },
     });
 
+    // onnxruntime-web (bundled with @huggingface/transformers) calls
+    //   new URL(import.meta.url)
+    // at module-init time. Webpack 5's default `parser.javascript.url = true`
+    // rewrites those calls so `import.meta.url` becomes a Next.js RelativeURL
+    // wrapper object rather than a plain string. RelativeURL's constructor
+    // then does `url.replace(...)`, throws "url.replace is not a function",
+    // and the whole table-detect pipeline dies at import time.
+    //
+    // Disabling `url` parsing ONLY for ORT files leaves import.meta.url as a
+    // real string (or preserves the runtime shape ORT expects), so the
+    // native URL constructor accepts it. Applies to the .bundle.min.mjs
+    // that transformers.js dynamically imports on the client.
+    config.module.rules.push({
+      test: /onnxruntime-web[\\/].*\.m?js$/,
+      parser: { url: false },
+    });
+
     // Prevent Node.js-only modules from being bundled for the browser
     if (!isServer) {
       config.resolve.fallback = {
