@@ -163,10 +163,10 @@ function withRetries(error: Error, retries: number): Error {
 }
 
 async function runKimiOcr(imageBase64: string, mode: OcrMode): Promise<{ text: string; retries: number }> {
-  const apiKey = process.env.KIMI_API_KEY;
-  if (!apiKey) throw new Error("KIMI_API_KEY is not set");
-  const base = (process.env.KIMI_BASE_URL || "https://api.kimi.com/coding/v1").replace(/\/+$/, "");
-  const model = process.env.KIMI_VISION_MODEL || "k3";
+  const apiKey = process.env.MOONSHOT_API_KEY;
+  if (!apiKey) throw new Error("MOONSHOT_API_KEY is not set");
+  const base = (process.env.MOONSHOT_BASE_URL || "https://api.moonshot.ai/v1").replace(/\/+$/, "");
+  const model = process.env.MOONSHOT_VISION_MODEL || "kimi-k3";
 
   const doFetch = () =>
     fetch(`${base}/chat/completions`, {
@@ -547,10 +547,10 @@ export async function POST(req: Request) {
 
         // Kimi not configured and the only remaining fallback (local server) is
         // down: tell the operator how to fix it rather than emit a bare 502.
-        if (!process.env.KIMI_API_KEY && unreachable) {
+        if (!process.env.MOONSHOT_API_KEY && unreachable) {
           return NextResponse.json(
             {
-              error: `No OCR provider is available. Set KIMI_API_KEY for cloud OCR, or start the local Unlimited-OCR server. (${detail})`,
+              error: `No OCR provider is available. Set MOONSHOT_API_KEY for cloud OCR, or start the local Unlimited-OCR server. (${detail})`,
             },
             { status: 503 }
           );
@@ -588,12 +588,12 @@ export async function POST(req: Request) {
         );
       }
 
-      const apiKey = process.env.KIMI_API_KEY;
+      const apiKey = process.env.MOONSHOT_API_KEY;
       if (!apiKey) {
         return NextResponse.json({ error: "Cloud OCR is not configured" }, { status: 503 });
       }
-      const base = (process.env.KIMI_BASE_URL || "https://api.kimi.com/coding/v1").replace(/\/+$/, "");
-      const model = process.env.KIMI_VISION_MODEL || "k3";
+      const base = (process.env.MOONSHOT_BASE_URL || "https://api.moonshot.ai/v1").replace(/\/+$/, "");
+      const model = process.env.MOONSHOT_VISION_MODEL || "kimi-k3";
 
       let res: Response;
       try {

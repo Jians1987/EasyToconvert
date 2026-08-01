@@ -26,7 +26,7 @@ export function resolveOcrChain(requested?: string): OcrProviderId[] {
   if (pin === "mistral") return ["mistral"];
 
   const chain: OcrProviderId[] = [];
-  if (process.env.KIMI_API_KEY) chain.push("kimi");
+  if (process.env.MOONSHOT_API_KEY) chain.push("kimi");
   chain.push("local"); // always a fallback target (may be offline in prod)
   return chain;
 }
