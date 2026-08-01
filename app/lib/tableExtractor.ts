@@ -209,7 +209,11 @@ async function ocrTableGrid(
     const rb = sortedRows[ri];
     const rowCrop = cropCanvas(tableCrop, rb);
     const res = await ocrImageWithUnlimitedOcr(rowCrop);
-    const rowText = res.text.replace(/\n/g, " ").trim();
+    // Coerce to string — a defensive guard so a malformed OCR response
+    // (empty, non-string, unexpected shape) can never crash extraction with
+    // a cryptic ".replace is not a function". Empty rows still fall through
+    // to the per-column split below and produce an empty rowCells entry.
+    const rowText = String(res?.text ?? "").replace(/\n/g, " ").trim();
 
     // split text into cells by column boundaries (rough heuristic)
     const rowCells: string[] = Array(sortedCols.length).fill("");
@@ -341,7 +345,7 @@ export type { DetectedTable as Table };
 export function toCSV(grid: string[][]): string {
   return grid
     .map((row) =>
-      row.map((cell) => `"${(cell ?? "").replace(/"/g, '""')}"`).join(",")
+      row.map((cell) => `"${String(cell ?? "").replace(/"/g, '""')}"`).join(",")
     )
     .join("\n");
 }
