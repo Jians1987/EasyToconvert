@@ -10,6 +10,7 @@ import {
   Sparkles,
   Video,
   Table2,
+  FileCode,
   ChevronRight,
   Shield,
   Zap,
@@ -91,6 +92,15 @@ export function HomeClient() {
       description: "Research-grade AI table detection powered by Microsoft Table Transformer (TATR). Locate tables in any PDF or image, extract rows & columns, export to CSV / JSON / Excel. Detection runs on-device; scanned pages use cloud OCR.",
       tools: ["Table Detector", "Structure Recognition", "CSV Export", "Excel Export", "JSON Export"],
       path: "/table-detect",
+    },
+    {
+      id: "word-to-markdown",
+      title: "Word to Markdown",
+      icon: FileCode,
+      color: "from-sky-500/20 to-blue-500/20 text-sky-500 border-sky-500/30",
+      description: "Convert Word .docx files into clean GitHub-Flavoured Markdown — headings, lists, tables, links, and formatting preserved. Runs entirely in your browser; your file never leaves your device.",
+      tools: ["DOCX to Markdown", "GFM Tables", "Preserve Headings", "Copy or Download .md"],
+      path: "/word-to-markdown",
     },
   ];
 
