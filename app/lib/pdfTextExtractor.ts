@@ -4,6 +4,8 @@
  * Used by PDF → Word and PDF → Excel converters.
  */
 
+import { loadPdfJs } from "./loadPdfJs";
+
 export interface PdfTextItem {
   str: string;
   x: number;
@@ -301,22 +303,5 @@ function detectTableRow(lines: PdfTextLine[]): boolean {
   return variance < avgGap * 0.6;
 }
 
-// ─── Shared PDF.js loader ────────────────────────────────────────────────────
-
-function loadPdfJs(): Promise<any> {
-  return new Promise((resolve, reject) => {
-    if (typeof window !== "undefined" && (window as any).pdfjsLib) {
-      resolve((window as any).pdfjsLib);
-      return;
-    }
-    const script = document.createElement("script");
-    script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
-    script.onload = () => {
-      (window as any).pdfjsLib.GlobalWorkerOptions.workerSrc =
-        "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-      resolve((window as any).pdfjsLib);
-    };
-    script.onerror = () => reject(new Error("Failed to load PDF.js engine."));
-    document.head.appendChild(script);
-  });
-}
+// PDF.js is loaded via the shared app/lib/loadPdfJs module (bundled v4, worker
+// served from /public) — see the import at the top of this file.

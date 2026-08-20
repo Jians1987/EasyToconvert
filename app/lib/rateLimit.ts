@@ -196,3 +196,17 @@ export function adobeRules(): RateLimitRule[] {
     { limit: readIntEnv("ADOBE_RATELIMIT_PER_DAY", 15), windowSeconds: 86_400 },
   ];
 }
+
+/**
+ * PDF compression runs sharp (a native image codec) once per embedded image on
+ * the server — CPU-bound and unmetered by any vendor, so the risk here is a
+ * scripted client pinning a server core, not a per-call bill. Looser than Adobe
+ * (no per-document cost) but tighter than OCR (each request can decode dozens of
+ * images). Env-tunable for self-hosters with more CPU headroom.
+ */
+export function compressRules(): RateLimitRule[] {
+  return [
+    { limit: readIntEnv("COMPRESS_RATELIMIT_PER_MIN", 10), windowSeconds: 60 },
+    { limit: readIntEnv("COMPRESS_RATELIMIT_PER_DAY", 200), windowSeconds: 86_400 },
+  ];
+}

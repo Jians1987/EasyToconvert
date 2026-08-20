@@ -17,7 +17,7 @@ const nextConfig = {
       },
     ];
   },
-  serverExternalPackages: ["@huggingface/transformers"],
+  serverExternalPackages: ["@huggingface/transformers", "sharp"],
   outputFileTracingExcludes: {
     "**/*": [
       "node_modules/onnxruntime-node/**/*",

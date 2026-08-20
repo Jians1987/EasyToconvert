@@ -19,6 +19,7 @@
 import React, { useCallback, useRef, useState } from "react";
 import ToolLayout from "@/components/ToolLayout";
 import Dropzone from "@/components/Dropzone";
+import { loadPdfJs } from "@/app/lib/loadPdfJs";
 import {
   extractTables,
   toCSV,
@@ -44,24 +45,8 @@ import {
 } from "lucide-react";
 import { useConversions } from "@/app/providers";
 
-// ─── PDF.js loader ────────────────────────────────────────────────────────────
-const loadPdfJs = (): Promise<any> =>
-  new Promise((resolve, reject) => {
-    if (typeof window !== "undefined" && (window as any).pdfjsLib) {
-      resolve((window as any).pdfjsLib);
-      return;
-    }
-    const s = document.createElement("script");
-    s.src =
-      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
-    s.onload = () => {
-      (window as any).pdfjsLib.GlobalWorkerOptions.workerSrc =
-        "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-      resolve((window as any).pdfjsLib);
-    };
-    s.onerror = () => reject(new Error("Failed to load PDF.js"));
-    document.head.appendChild(s);
-  });
+// PDF.js comes from the shared app/lib/loadPdfJs module (bundled v4, worker
+// served from /public) — imported above.
 
 // ─── Render one PDF page → canvas + text items ───────────────────────────────
 async function renderPdfPage(

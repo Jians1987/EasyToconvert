@@ -5,6 +5,7 @@ import ToolLayout from "@/components/ToolLayout";
 import Dropzone from "@/components/Dropzone";
 import { useConversions } from "@/app/providers";
 import { ocrImageWithUnlimitedOcr } from "@/app/lib/ocr";
+import { loadPdfJs } from "@/app/lib/loadPdfJs";
 import { convertPdfToDocx, type DocxProgress, type ConvertDocxOptions } from "@/app/lib/pdfToDocx";
 import { extractPdfText } from "@/app/lib/pdfTextExtractor";
 import { convertPdfToXlsx, type XlsxProgress, type TableEngine } from "@/app/lib/pdfToXlsx";
@@ -174,24 +175,8 @@ interface PageLayoutItem {
   rotation: number; // 0, 90, 180, 270
 }
 
-// Shared PDF.js loader
-const loadPdfJs = (): Promise<any> => {
-  return new Promise((resolve, reject) => {
-    if (typeof window !== "undefined" && (window as any).pdfjsLib) {
-      resolve((window as any).pdfjsLib);
-      return;
-    }
-    const script = document.createElement("script");
-    script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
-    script.onload = () => {
-      (window as any).pdfjsLib.GlobalWorkerOptions.workerSrc =
-        "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-      resolve((window as any).pdfjsLib);
-    };
-    script.onerror = () => reject(new Error("Failed to load PDF.js engine."));
-    document.head.appendChild(script);
-  });
-};
+// PDF.js comes from the shared app/lib/loadPdfJs module (bundled v4, worker
+// served from /public) — imported at the top of this file.
 
 type RenderedPdfImage = { url: string; page: number };
 
@@ -256,6 +241,62 @@ const pointsToPath = (points?: { x: number; y: number }[]) => {
   return `M ${points[0].x} ${points[0].y} ` + points.slice(1).map(p => `L ${p.x} ${p.y}`).join(" ");
 };
 
+// Human-readable byte size, e.g. 4_400_000 → "4.4 MB".
+const formatBytes = (bytes: number): string => {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+// Standard sheet sizes in PDF points (1pt = 1/72"). Portrait orientation.
+const PAGE_SIZES = {
+  a4: { w: 595.28, h: 841.89 },
+  letter: { w: 612, h: 792 },
+} as const;
+
+// Decode an image file with its EXIF orientation baked in, returning bytes
+// pdf-lib can embed. Browsers strip EXIF when you embed raw JPEG bytes directly,
+// so a photo shot in landscape lands sideways; drawing through an
+// orientation-corrected ImageBitmap onto a canvas fixes that. Going through the
+// canvas also lets us accept formats pdf-lib can't embed natively (WebP, GIF,
+// BMP) by re-exporting them as PNG. HEIC still can't be decoded by the browser
+// and surfaces a clear error to the caller.
+async function decodeImageOriented(
+  file: File
+): Promise<{ bytes: Uint8Array; format: "jpg" | "png"; width: number; height: number }> {
+  let bitmap: ImageBitmap;
+  try {
+    bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+  } catch {
+    const isHeic = /\.hei[cf]$/i.test(file.name) || file.type.includes("heic") || file.type.includes("heif");
+    throw new Error(
+      isHeic
+        ? `${file.name}: HEIC images can't be decoded in the browser. Convert it to JPG or PNG first.`
+        : `${file.name}: this image format could not be decoded.`
+    );
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas rendering is unavailable.");
+  ctx.drawImage(bitmap, 0, 0);
+  bitmap.close();
+
+  // JPEG sources stay JPEG (smaller for photos); everything else becomes PNG so
+  // any alpha channel survives.
+  const isJpeg = file.type === "image/jpeg" || /\.jpe?g$/i.test(file.name);
+  const mime = isJpeg ? "image/jpeg" : "image/png";
+  const dataUrl = canvas.toDataURL(mime, isJpeg ? 0.92 : undefined);
+  const base64 = dataUrl.substring(dataUrl.indexOf(",") + 1);
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+  return { bytes, format: isJpeg ? "jpg" : "png", width: canvas.width, height: canvas.height };
+}
+
 // Helper to compute bounding box of any annotation type
 const getAnnBounds = (ann: Annotation) => {
   if (ann.type === "draw" || ann.type === "highlight") {
@@ -290,6 +331,18 @@ export function PdfPageClient() {
   const [docEngine, setDocEngine] = useState<"browser" | "adobe">("browser");
   const [ocrEnabled, setOcrEnabled] = useState(true);
   const [ocrEngine, setOcrEngine] = useState<"unlimited">("unlimited");
+
+  // Compression level for PDF → Compress. Maps to a JPEG quality + downsample
+  // preset on the server (see app/api/pdf/compress/route.ts).
+  const [compressLevel, setCompressLevel] = useState<"low" | "medium" | "high">("medium");
+
+  // Image → PDF layout. "fit" makes each page match its image exactly; "a4"/
+  // "letter" place the image, contained and centred, on a standard sheet.
+  const [imgPdfPageSize, setImgPdfPageSize] = useState<"fit" | "a4" | "letter">("fit");
+  const [imgPdfOrientation, setImgPdfOrientation] = useState<"auto" | "portrait" | "landscape">("auto");
+  // Populated from the compress response headers so we can show the real
+  // reduction ("4.2 MB → 1.1 MB, 74% smaller") instead of guessing.
+  const [compressStats, setCompressStats] = useState<{ before: number; after: number } | null>(null);
 
   // Engine selector for PDF → Excel. "tatr" = Microsoft Table Transformer (on-device DETR);
   // "cluster" = legacy X/Y text-position clustering.
@@ -996,17 +1049,33 @@ export function PdfPageClient() {
 
       } else if (mode === "compress") {
         const file = selectedFiles[0];
+        setCompressStats(null);
         const formData = new FormData();
         formData.append("file", file);
+        formData.append("level", compressLevel);
         const res = await fetch("/api/pdf/compress", {
           method: "POST",
           body: formData,
         });
         if (!res.ok) {
-           const errText = await res.text();
-           throw new Error(errText);
+           // Prefer the structured { error } body (rate-limit + failures send it);
+           // fall back to raw text so nothing is swallowed.
+           let errMsg = `Compression failed (${res.status})`;
+           try {
+             const errJson = await res.json();
+             if (errJson?.error) errMsg = errJson.error;
+           } catch {
+             const errText = await res.text().catch(() => "");
+             if (errText) errMsg = errText;
+           }
+           throw new Error(errMsg);
         }
         const blob = await res.blob();
+        // The route reports true before/after sizes in headers so the UI can
+        // state the real reduction rather than trusting blob.size alone.
+        const before = Number(res.headers.get("X-Original-Size")) || file.size;
+        const after = Number(res.headers.get("X-Compressed-Size")) || blob.size;
+        setCompressStats({ before, after });
         const url = URL.createObjectURL(blob);
         setDownloadUrl(url);
         addHistoryItem({
@@ -1020,17 +1089,34 @@ export function PdfPageClient() {
       } else if (mode === "image-to-pdf") {
         const pdf = await PdfLibDocument.create();
         for (const file of selectedFiles) {
-           const imageBytes = await file.arrayBuffer();
-           let image;
-           if (file.type === "image/jpeg" || file.name.toLowerCase().endsWith(".jpg") || file.name.toLowerCase().endsWith(".jpeg")) {
-              image = await pdf.embedJpg(imageBytes);
-           } else if (file.type === "image/png" || file.name.toLowerCase().endsWith(".png")) {
-              image = await pdf.embedPng(imageBytes);
+           // EXIF-correct + normalise the format so sideways phone photos come
+           // out upright and WebP/GIF/BMP are accepted (re-exported as PNG).
+           const { bytes, format, width: imgW, height: imgH } = await decodeImageOriented(file);
+           const image = format === "jpg" ? await pdf.embedJpg(bytes) : await pdf.embedPng(bytes);
+
+           if (imgPdfPageSize === "fit") {
+             // Page matches the (orientation-corrected) image exactly.
+             const page = pdf.addPage([imgW, imgH]);
+             page.drawImage(image, { x: 0, y: 0, width: imgW, height: imgH });
            } else {
-              throw new Error("Only JPG and PNG are supported for Image to PDF");
+             // Place the image, contained and centred, on a standard sheet.
+             const base = PAGE_SIZES[imgPdfPageSize];
+             const landscape =
+               imgPdfOrientation === "landscape" ||
+               (imgPdfOrientation === "auto" && imgW > imgH);
+             const pageW = landscape ? base.h : base.w;
+             const pageH = landscape ? base.w : base.h;
+             const scale = Math.min(pageW / imgW, pageH / imgH);
+             const drawW = imgW * scale;
+             const drawH = imgH * scale;
+             const page = pdf.addPage([pageW, pageH]);
+             page.drawImage(image, {
+               x: (pageW - drawW) / 2,
+               y: (pageH - drawH) / 2,
+               width: drawW,
+               height: drawH,
+             });
            }
-           const page = pdf.addPage([image.width, image.height]);
-           page.drawImage(image, { x: 0, y: 0, width: image.width, height: image.height });
         }
         const pdfBytes = await pdf.save();
         const blob = new Blob([pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
@@ -1557,6 +1643,117 @@ export function PdfPageClient() {
                     <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Allow Document Modification</span>
                   </label>
                 </div>
+              </div>
+            )}
+
+            {mode === "image-to-pdf" && (
+              <div className="space-y-3">
+                <label className="text-[10px] uppercase font-bold text-slate-400">Page Size</label>
+                <div className="flex space-x-2">
+                  {([
+                    { id: "fit", label: "Match Image" },
+                    { id: "a4", label: "A4" },
+                    { id: "letter", label: "Letter" },
+                  ] as const).map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => setImgPdfPageSize(opt.id)}
+                      className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold ${
+                        imgPdfPageSize === opt.id
+                          ? "bg-indigo-600 text-white"
+                          : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+
+                {imgPdfPageSize !== "fit" && (
+                  <>
+                    <label className="text-[10px] uppercase font-bold text-slate-400">Orientation</label>
+                    <div className="flex space-x-2">
+                      {([
+                        { id: "auto", label: "Auto" },
+                        { id: "portrait", label: "Portrait" },
+                        { id: "landscape", label: "Landscape" },
+                      ] as const).map((opt) => (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => setImgPdfOrientation(opt.id)}
+                          className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold ${
+                            imgPdfOrientation === opt.id
+                              ? "bg-indigo-600 text-white"
+                              : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200"
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                <p className="text-[10px] text-slate-500 leading-relaxed">
+                  {imgPdfPageSize === "fit"
+                    ? "Each page is sized to its image. Photos keep their exact proportions with no borders."
+                    : `Each image is centred on a ${imgPdfPageSize.toUpperCase()} sheet, scaled to fit. ${imgPdfOrientation === "auto" ? "Orientation follows each image." : ""}`}
+                </p>
+                <p className="text-[10px] text-slate-400 leading-relaxed">
+                  Phone photos are auto-rotated using their EXIF orientation. JPG, PNG, and WebP are supported.
+                </p>
+              </div>
+            )}
+
+            {mode === "compress" && (
+              <div className="space-y-3">
+                <label className="text-[10px] uppercase font-bold text-slate-400">Compression Level</label>
+                <div className="flex space-x-2">
+                  {([
+                    { id: "low", label: "Light", hint: "Best quality" },
+                    { id: "medium", label: "Balanced", hint: "Recommended" },
+                    { id: "high", label: "Strong", hint: "Smallest file" },
+                  ] as const).map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => setCompressLevel(opt.id)}
+                      className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold text-center ${
+                        compressLevel === opt.id
+                          ? "bg-indigo-600 text-white"
+                          : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200"
+                      }`}
+                    >
+                      <span className="block">{opt.label}</span>
+                      <span className={`block text-[9px] font-normal ${compressLevel === opt.id ? "text-indigo-100" : "text-slate-400"}`}>{opt.hint}</span>
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[10px] text-slate-500 leading-relaxed">
+                  {compressLevel === "low" && "Re-encodes embedded photos at near-lossless quality. Modest savings, no visible change."}
+                  {compressLevel === "medium" && "Re-encodes photos and caps their resolution at ~2000px. Big savings on scans; text and vectors are untouched."}
+                  {compressLevel === "high" && "Aggressive photo re-encoding and downsampling to ~1500px. Smallest file; images may soften. Text stays sharp."}
+                </p>
+                <p className="text-[10px] text-slate-400 leading-relaxed">
+                  Compression runs on the server. Only embedded images are re-encoded — your text stays selectable and vector graphics stay crisp.
+                </p>
+                {compressStats && (
+                  <div className="p-3 rounded-xl border border-emerald-500/30 bg-emerald-50/60 dark:bg-emerald-950/20">
+                    {compressStats.after < compressStats.before ? (
+                      <p className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">
+                        {formatBytes(compressStats.before)} → {formatBytes(compressStats.after)}
+                        {" · "}
+                        {Math.round((1 - compressStats.after / compressStats.before) * 100)}% smaller
+                      </p>
+                    ) : (
+                      <p className="text-[11px] font-medium text-slate-600 dark:text-slate-300">
+                        Already well-optimised — this PDF is {formatBytes(compressStats.before)} and couldn&apos;t be shrunk further without quality loss.
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
