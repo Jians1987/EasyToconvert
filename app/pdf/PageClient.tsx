@@ -7,22 +7,23 @@ import { useConversions } from "@/app/providers";
 import { ocrImageWithUnlimitedOcr } from "@/app/lib/ocr";
 import { loadPdfJs } from "@/app/lib/loadPdfJs";
 import { convertPdfToDocx, type DocxProgress, type ConvertDocxOptions } from "@/app/lib/pdfToDocx";
+import { convertPdfToMarkdown } from "@/app/lib/pdfToMarkdown";
 import { extractPdfText } from "@/app/lib/pdfTextExtractor";
 import { convertPdfToXlsx, type XlsxProgress, type TableEngine } from "@/app/lib/pdfToXlsx";
 import { renderPdfWithPdfium } from "@/app/lib/pdfiumRenderer";
 import { extractTables, type PdfTextItem } from "@/app/lib/tableExtractor";
 import { PDFDocument, degrees, rgb, StandardFonts } from "pdf-lib-plus-encrypt";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, BorderStyle, ImageRun } from "docx";
-import { 
+import {
   FileText, Star, AlertTriangle, Download, Image as ImageIcon, Type, FileSpreadsheet, Sparkles,
   Trash2, RotateCw, ArrowUp, ArrowDown, Plus, Square, Circle as CircleIcon, PenTool, Edit3,
-  Paintbrush, ChevronsUpDown, MousePointer, Check, ArrowRight, Upload, Signature, Zap
+  Paintbrush, ChevronsUpDown, MousePointer, Check, ArrowRight, Upload, Signature, Zap, Copy
 } from "lucide-react";
 
 // Office→PDF (Word/Excel/PPT) is deliberately absent: it needs a converter
 // service (LibreOffice/Gotenberg/CloudConvert) that this project does not run,
 // and the endpoint behind it only ever returned 501.
-type PdfMode = "merge" | "split" | "rotate" | "to-doc" | "to-excel" | "to-image" | "edit" | "protect" | "compress" | "image-to-pdf";
+type PdfMode = "merge" | "split" | "rotate" | "to-doc" | "to-excel" | "to-image" | "to-markdown" | "edit" | "protect" | "compress" | "image-to-pdf";
 
 
 interface TextItem {
@@ -344,6 +345,12 @@ export function PdfPageClient() {
   // reduction ("4.2 MB → 1.1 MB, 74% smaller") instead of guessing.
   const [compressStats, setCompressStats] = useState<{ before: number; after: number } | null>(null);
 
+  // PDF → Markdown output. Shown as an editable preview (copy/download), not
+  // funnelled through the generic downloadUrl blob flow, since users mostly
+  // want to read/copy Markdown rather than just save a file blind.
+  const [markdownOutput, setMarkdownOutput] = useState("");
+  const [mdCopied, setMdCopied] = useState(false);
+
   // Engine selector for PDF → Excel. "tatr" = Microsoft Table Transformer (on-device DETR);
   // "cluster" = legacy X/Y text-position clustering.
   const [tableEngine, setTableEngine] = useState<"tatr" | "cluster">("tatr");
@@ -423,6 +430,7 @@ export function PdfPageClient() {
     setPageLayout([]);
     setToolMode("select");
     setSelectedAnnId(null);
+    setMarkdownOutput("");
 
     if (files.length > 0 && mode === "edit") {
       try {
@@ -465,6 +473,7 @@ export function PdfPageClient() {
       case "to-doc": return "to Word";
       case "to-excel": return "to Excel";
       case "to-image": return "to Image";
+      case "to-markdown": return "to Markdown";
       case "edit": return "Edit";
       case "protect": return "Protect";
       case "compress": return "Compress";
@@ -479,9 +488,10 @@ export function PdfPageClient() {
     "to-doc": "Convert a PDF into a Word Document (.docx). Choose a conversion engine below — the in-browser engine keeps the file on your device, and Adobe generally gives the most faithful result but uploads it.",
     "to-excel": "Extract tables from a PDF into an Excel Spreadsheet (.xlsx). Uses Microsoft Table Transformer (on-device) or Kimi Vision Cloud AI.",
     "to-image": "Render each page of a PDF as a high-quality JPG image you can save individually.",
+    "to-markdown": "Convert a PDF into clean Markdown (.md) — headings, tables, and bold/italic text preserved from the text layer. Scanned pages are auto-OCR'd into GitHub-Flavoured Markdown. Runs in your browser.",
     edit: "Draw, annotate, add text, stamps, signatures, images, and shapes directly on PDF pages. Reorder, rotate, delete, and export.",
     protect: "Encrypt your PDF with a password. Apply advanced permissions to restrict printing, copying, and modifications.",
-    compress: "Rewrite the PDF with object streams to strip structural bloat. This is lossless, so gains depend on the file — documents dominated by scanned images will barely shrink.",
+    compress: "Re-encodes embedded photos at your chosen quality level and re-packs the file structure. Scanned/photo-heavy PDFs shrink the most; text-only PDFs see smaller gains since there are no images to recompress.",
     "image-to-pdf": "Convert JPG, PNG, or other images into a single PDF document.",
   };
 
@@ -1012,6 +1022,30 @@ export function PdfPageClient() {
           status: "success",
         });
 
+      } else if (mode === "to-markdown") {
+        const file = selectedFiles[0];
+        setMarkdownOutput("");
+        setTatrProgressLabel("Analysing document…");
+        setTatrProgressPct(5);
+
+        const markdown = await convertPdfToMarkdown(
+          file,
+          inputPassword || undefined,
+          (p) => {
+            setTatrProgressLabel(p.message);
+            setTatrProgressPct(p.percent);
+          },
+          { ocrFallback: ocrEnabled }
+        );
+        setMarkdownOutput(markdown);
+
+        addHistoryItem({
+          fileName: `${file.name.split(".")[0] || "document"}.md`,
+          fileSize: new Blob([markdown]).size,
+          toolType: "pdf-to-markdown",
+          status: "success",
+        });
+
       } else if (mode === "protect") {
         const file = selectedFiles[0];
         const pdf = await loadWithPassword(file);
@@ -1262,6 +1296,7 @@ export function PdfPageClient() {
               { id: "to-doc", label: "→ Word" },
               { id: "to-excel", label: "→ Excel" },
               { id: "to-image", label: "→ Image" },
+              { id: "to-markdown", label: "→ Markdown" },
               { id: "edit", label: "Edit" },
               { id: "protect", label: "Protect" },
               { id: "compress", label: "Compress" },
@@ -1277,6 +1312,7 @@ export function PdfPageClient() {
                   setPageLayout([]);
                   setToolMode("select");
                   setSelectedAnnId(null);
+                  setMarkdownOutput("");
                 }}
                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${
                   mode === t.id
@@ -1607,6 +1643,63 @@ export function PdfPageClient() {
               </div>
             )}
 
+            {mode === "to-markdown" && (
+              <div className="space-y-3">
+                <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-3 space-y-2 bg-slate-50/50 dark:bg-slate-900/30">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1">
+                      <Sparkles className="w-3 h-3" /> OCR for Scanned Pages
+                    </label>
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={ocrEnabled}
+                        onChange={(e) => setOcrEnabled(e.target.checked)}
+                        className="rounded border-slate-300 text-indigo-600"
+                      />
+                      <span className="text-[10px] font-semibold text-slate-600 dark:text-slate-300">
+                        {ocrEnabled ? "Enabled" : "Disabled"}
+                      </span>
+                    </label>
+                  </div>
+                  {ocrEnabled && (
+                    <div className="space-y-2">
+                      <p className="text-[10px] text-slate-500 leading-relaxed">
+                        Pages with no embedded text are sent to a cloud OCR service, which already returns
+                        GitHub-Flavoured Markdown directly.
+                      </p>
+                      <div className="p-2.5 rounded-xl border border-amber-500/30 bg-amber-50/50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-400 text-[11px] font-medium space-y-1">
+                        <div className="flex items-center gap-1.5 font-semibold">
+                          <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                          <span>Heads up: this uploads an image of each scanned page</span>
+                        </div>
+                        <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                          Uses Kimi Vision (Moonshot AI) by default. Turn this off to skip OCR — scanned pages
+                          will be left as a placeholder note instead.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Progress indicator */}
+                {processing && tatrProgressPct > 0 && (
+                  <div className="mt-2">
+                    <div className="flex justify-between text-[10px] text-slate-400 mb-1">
+                      <span>{tatrProgressLabel}</span>
+                      <span>{tatrProgressPct}%</span>
+                    </div>
+                    <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-1.5">
+                      <div
+                        className="bg-indigo-600 h-1.5 rounded-full transition-all duration-300"
+                        style={{ width: `${tatrProgressPct}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {mode === "protect" && (
               <div className="space-y-4">
                 <div className="space-y-3 p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50">
@@ -1900,6 +1993,58 @@ export function PdfPageClient() {
                 <span>Page {image.page}</span><Download className="h-3.5 w-3.5" />
               </a>
             ))}
+          </div>
+        )}
+
+        {mode === "to-markdown" && markdownOutput && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                Markdown Output
+              </label>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(markdownOutput);
+                      setMdCopied(true);
+                      setTimeout(() => setMdCopied(false), 1500);
+                    } catch {
+                      alert("Couldn't copy to clipboard.");
+                    }
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                >
+                  {mdCopied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+                  {mdCopied ? "Copied" : "Copy"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const blob = new Blob([markdownOutput], { type: "text/markdown;charset=utf-8" });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = (selectedFiles[0]?.name.replace(/\.pdf$/i, "") || "document") + ".md";
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    URL.revokeObjectURL(url);
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Download .md
+                </button>
+              </div>
+            </div>
+            <textarea
+              value={markdownOutput}
+              onChange={(e) => setMarkdownOutput(e.target.value)}
+              spellCheck={false}
+              className="w-full h-96 font-mono text-xs leading-relaxed p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-950/40 text-slate-800 dark:text-slate-200 resize-y focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+            />
           </div>
         )}
       </div>

@@ -26,8 +26,8 @@ export function HomeClient() {
       title: "PDF Utilities",
       icon: FileText,
       color: "from-red-500/20 to-orange-500/20 text-red-500 border-red-500/30",
-      description: "Merge, split, rotate, edit, and convert PDF files to Word, Excel, or JPG images directly in your browser.",
-      tools: ["Merge PDF", "Split PDF", "PDF to Word", "PDF to Excel", "PDF Editor", "Protect PDF"],
+      description: "Merge, split, rotate, edit, and convert PDF files to Word, Excel, Markdown, or JPG images directly in your browser.",
+      tools: ["Merge PDF", "Split PDF", "PDF to Word", "PDF to Excel", "PDF to Markdown", "PDF Editor", "Protect PDF"],
       path: "/pdf",
     },
     {
