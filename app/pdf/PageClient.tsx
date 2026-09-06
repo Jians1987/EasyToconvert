@@ -8,6 +8,7 @@ import { ocrImageWithUnlimitedOcr } from "@/app/lib/ocr";
 import { loadPdfJs } from "@/app/lib/loadPdfJs";
 import { convertPdfToDocx, type DocxProgress, type ConvertDocxOptions } from "@/app/lib/pdfToDocx";
 import { convertPdfToMarkdown } from "@/app/lib/pdfToMarkdown";
+import { convertMarkdownToPdf, type PageSize as MdPageSize } from "@/app/lib/markdownToPdf";
 import { extractPdfText } from "@/app/lib/pdfTextExtractor";
 import { convertPdfToXlsx, type XlsxProgress, type TableEngine } from "@/app/lib/pdfToXlsx";
 import { renderPdfWithPdfium } from "@/app/lib/pdfiumRenderer";
@@ -23,7 +24,7 @@ import {
 // Office→PDF (Word/Excel/PPT) is deliberately absent: it needs a converter
 // service (LibreOffice/Gotenberg/CloudConvert) that this project does not run,
 // and the endpoint behind it only ever returned 501.
-type PdfMode = "merge" | "split" | "rotate" | "to-doc" | "to-excel" | "to-image" | "to-markdown" | "edit" | "protect" | "compress" | "image-to-pdf";
+type PdfMode = "merge" | "split" | "rotate" | "to-doc" | "to-excel" | "to-image" | "to-markdown" | "edit" | "protect" | "compress" | "image-to-pdf" | "markdown-to-pdf";
 
 
 interface TextItem {
@@ -351,6 +352,10 @@ export function PdfPageClient() {
   const [markdownOutput, setMarkdownOutput] = useState("");
   const [mdCopied, setMdCopied] = useState(false);
 
+  // Markdown → PDF page size. Output IS a PDF file here, so (unlike PDF →
+  // Markdown above) it goes through the generic downloadUrl blob flow below.
+  const [mdToPdfPageSize, setMdToPdfPageSize] = useState<MdPageSize>("a4");
+
   // Engine selector for PDF → Excel. "tatr" = Microsoft Table Transformer (on-device DETR);
   // "cluster" = legacy X/Y text-position clustering.
   const [tableEngine, setTableEngine] = useState<"tatr" | "cluster">("tatr");
@@ -478,6 +483,7 @@ export function PdfPageClient() {
       case "protect": return "Protect";
       case "compress": return "Compress";
       case "image-to-pdf": return "Image to PDF";
+      case "markdown-to-pdf": return "Markdown to PDF";
     }
   }, [mode]);
 
@@ -493,6 +499,7 @@ export function PdfPageClient() {
     protect: "Encrypt your PDF with a password. Apply advanced permissions to restrict printing, copying, and modifications.",
     compress: "Re-encodes embedded photos at your chosen quality level and re-packs the file structure. Scanned/photo-heavy PDFs shrink the most; text-only PDFs see smaller gains since there are no images to recompress.",
     "image-to-pdf": "Convert JPG, PNG, or other images into a single PDF document.",
+    "markdown-to-pdf": "Convert a Markdown (.md) file into a formatted PDF — headings, bold/italic, lists, tables, and code blocks are all laid out and paginated automatically. Runs in your browser.",
   };
 
   // Check if any uploaded PDFs are encrypted
@@ -1164,6 +1171,21 @@ export function PdfPageClient() {
           downloadUrl: url,
         });
 
+      } else if (mode === "markdown-to-pdf") {
+        const file = selectedFiles[0];
+        const markdownText = await file.text();
+        const pdfBytes = await convertMarkdownToPdf(markdownText, { pageSize: mdToPdfPageSize });
+        const blob = new Blob([pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
+        const url = URL.createObjectURL(blob);
+        setDownloadUrl(url);
+        addHistoryItem({
+          fileName: `${file.name.replace(/\.(md|markdown|txt)$/i, "") || "document"}.pdf`,
+          fileSize: blob.size,
+          toolType: "markdown-to-pdf",
+          status: "success",
+          downloadUrl: url,
+        });
+
       } else if (mode === "edit") {
         const file = selectedFiles[0];
         const pdf = await loadWithPassword(file);
@@ -1301,6 +1323,7 @@ export function PdfPageClient() {
               { id: "protect", label: "Protect" },
               { id: "compress", label: "Compress" },
               { id: "image-to-pdf", label: "Img→PDF" },
+              { id: "markdown-to-pdf", label: "MD→PDF" },
             ].map((t) => (
               <button
                 key={t.id}
@@ -1341,10 +1364,24 @@ export function PdfPageClient() {
         {/* Dropzone */}
         <Dropzone
           onFilesSelected={handleFilesSelected}
-          accept="application/pdf"
-          multiple={mode === "merge"}
+          accept={
+            mode === "image-to-pdf"
+              ? "image/*"
+              : mode === "markdown-to-pdf"
+              ? ".md,.markdown,.txt,text/markdown,text/plain"
+              : "application/pdf"
+          }
+          multiple={mode === "merge" || mode === "image-to-pdf"}
           maxSizeMB={50}
-          title={mode === "merge" ? "Drag & drop PDF files to merge" : "Drag & drop a PDF file"}
+          title={
+            mode === "merge"
+              ? "Drag & drop PDF files to merge"
+              : mode === "image-to-pdf"
+              ? "Drag & drop image files"
+              : mode === "markdown-to-pdf"
+              ? "Drag & drop a Markdown (.md) file"
+              : "Drag & drop a PDF file"
+          }
         />
 
         {/* Encryption warning */}
@@ -1800,6 +1837,35 @@ export function PdfPageClient() {
               </div>
             )}
 
+            {mode === "markdown-to-pdf" && (
+              <div className="space-y-3">
+                <label className="text-[10px] uppercase font-bold text-slate-400">Page Size</label>
+                <div className="flex space-x-2">
+                  {([
+                    { id: "a4", label: "A4" },
+                    { id: "letter", label: "Letter" },
+                  ] as const).map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => setMdToPdfPageSize(opt.id)}
+                      className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold ${
+                        mdToPdfPageSize === opt.id
+                          ? "bg-indigo-600 text-white"
+                          : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[10px] text-slate-500 leading-relaxed">
+                  Headings, bold/italic, lists, GFM tables, code blocks, and blockquotes are rendered and paginated
+                  automatically. Links render as text followed by their URL — no clickable annotations yet.
+                </p>
+              </div>
+            )}
+
             {mode === "compress" && (
               <div className="space-y-3">
                 <label className="text-[10px] uppercase font-bold text-slate-400">Compression Level</label>
@@ -1978,6 +2044,8 @@ export function PdfPageClient() {
                   ? `${selectedFiles[0]?.name.split(".")[0] || "preview"}_page1.jpg`
                   : mode === "edit"
                   ? `edited_${selectedFiles[0]?.name || "document.pdf"}`
+                  : mode === "markdown-to-pdf"
+                  ? `${selectedFiles[0]?.name.replace(/\.(md|markdown|txt)$/i, "") || "document"}.pdf`
                   : `${mode}_pdf_${Date.now()}.pdf`
               }
               className="px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-500 hover:bg-emerald-600 text-white transition-all shadow-sm"
