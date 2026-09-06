@@ -4,7 +4,7 @@ import { MediaPageClient } from "./PageClient";
 export const metadata: Metadata = {
   title: "Free Online Video & Audio Converter – Compress MP4, MP3",
   description:
-    "Compress and convert video and audio files online for free using FFmpeg WebAssembly. No uploads — everything runs in your browser.",
+    "Compress and convert video and audio files online for free using FFmpeg WebAssembly. Local conversion, with optional cloud audio transcription.",
   keywords: [
     "video compressor",
     "audio converter",

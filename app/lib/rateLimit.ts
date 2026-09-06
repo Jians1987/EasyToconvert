@@ -135,9 +135,12 @@ async function upstashCheckBatch(key: string, rules: RateLimitRule[]): Promise<(
  * Check every rule for a client key. The first breached window blocks the
  * request; otherwise the tightest remaining budget is returned (for headers).
  */
-export async function rateLimit(key: string, rules: RateLimitRule[]): Promise<RateLimitResult> {
+export async function rateLimit(key: string, rules: RateLimitRule[], options: { requireShared?: boolean } = {}): Promise<RateLimitResult> {
   const now = Date.now();
   const upstashResults = await upstashCheckBatch(key, rules);
+  if (options.requireShared && upstashResults.some(result => result === null)) {
+    throw new Error("Shared rate limiter unavailable");
+  }
   let tightest: RateLimitResult | null = null;
 
   for (let i = 0; i < rules.length; i++) {
@@ -209,4 +212,15 @@ export function compressRules(): RateLimitRule[] {
     { limit: readIntEnv("COMPRESS_RATELIMIT_PER_MIN", 10), windowSeconds: 60 },
     { limit: readIntEnv("COMPRESS_RATELIMIT_PER_DAY", 200), windowSeconds: 86_400 },
   ];
+}
+
+export function transcriptionRules(): RateLimitRule[] {
+  return [
+    { limit: readIntEnv("TRANSCRIBE_RATELIMIT_PER_MIN", 3), windowSeconds: 60 },
+    { limit: readIntEnv("TRANSCRIBE_RATELIMIT_PER_DAY", 15), windowSeconds: 86_400 },
+  ];
+}
+
+export function transcriptionGlobalRules(): RateLimitRule[] {
+  return [{ limit: readIntEnv("TRANSCRIBE_GLOBAL_PER_DAY", 100), windowSeconds: 86_400 }];
 }

@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import ToolLayout from "@/components/ToolLayout";
 import { useConversions } from "@/app/providers";
 import yaml from "js-yaml";
+import { csvToJson, jsonToCsv } from "@/app/lib/dataConverters";
 import { Database, FileCode, CheckCircle, AlertCircle, Copy, Check, Star } from "lucide-react";
 
 type DataMode = "json-format" | "csv-json" | "xml-json" | "json-yaml";
@@ -33,41 +34,7 @@ export function DataPageClient() {
         }
       } else if (mode === "csv-json") {
         if (action === "convert") {
-          // CSV to JSON — RFC 4180 compliant parser supporting quoted fields with commas
-          const parseCsvLine = (line: string): string[] => {
-            const fields: string[] = [];
-            let current = "";
-            let inQuotes = false;
-            for (let i = 0; i < line.length; i++) {
-              const ch = line[i];
-              if (ch === '"') {
-                if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
-                else { inQuotes = !inQuotes; }
-              } else if (ch === "," && !inQuotes) {
-                fields.push(current.trim());
-                current = "";
-              } else {
-                current += ch;
-              }
-            }
-            fields.push(current.trim());
-            return fields;
-          };
-
-          const lines = inputText.trim().split("\n");
-          if (lines.length < 2) throw new Error("CSV must contain at least a header and one data row.");
-          const headers = parseCsvLine(lines[0]);
-          const result = [];
-          for (let i = 1; i < lines.length; i++) {
-            if (!lines[i].trim()) continue;
-            const obj: { [key: string]: string } = {};
-            const values = parseCsvLine(lines[i]);
-            headers.forEach((header, index) => {
-              obj[header] = values[index] ?? "";
-            });
-            result.push(obj);
-          }
-          setOutputText(JSON.stringify(result, null, 2));
+          setOutputText(csvToJson(inputText));
         }
       } else if (mode === "xml-json") {
         if (action === "convert") {
@@ -131,15 +98,7 @@ export function DataPageClient() {
   const handleJsonToCsv = () => {
     setError(null);
     try {
-      const parsed = JSON.parse(inputText);
-      const array = Array.isArray(parsed) ? parsed : [parsed];
-      if (array.length === 0) throw new Error("Input JSON array is empty — nothing to convert.");
-      const headers = Object.keys(array[0]);
-      const csvRows = [
-        headers.join(","), // header row
-        ...array.map(row => headers.map(fieldName => JSON.stringify(row[fieldName] ?? "")).join(","))
-      ];
-      setOutputText(csvRows.join("\n"));
+      setOutputText(jsonToCsv(inputText));
     } catch (e: any) {
       setError(e.message || "Ensure input is a valid JSON array or object.");
     }

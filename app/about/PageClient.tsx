@@ -22,7 +22,7 @@ export function AboutPageClient() {
           We set out to create a dashboard where standard operations (formatting code, generating QR codes, merging PDF pages, and converting image formats) occur entirely inside the user's browser canvas and JavaScript heap.
         </p>
         <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-          By deploying modern WebAssembly binaries, canvas buffers, and lightweight client-side parsers, we ensure your data never leaves your environment unless you explicitly invoke our AI services.
+          Most conversions run in your browser. PDF compression uploads to our server; optional Adobe export and cloud AI send files or text to the selected provider. Each tool explains when an upload is involved.
         </p>
       </div>
 
@@ -35,8 +35,7 @@ export function AboutPageClient() {
           <div className="space-y-1.5">
             <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200">Browser-First Speed</h4>
             <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-              No upload, no queue, no waiting for a worker to pick up your job. Conversion starts the moment you
-              drop the file.
+              Local tools process files on your device. Server and cloud tools require an upload and may take longer.
             </p>
           </div>
         </div>
@@ -48,8 +47,7 @@ export function AboutPageClient() {
           <div className="space-y-1.5">
             <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200">Privacy & Security</h4>
             <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-              No accounts, no ad trackers, no file storage. The only time your data leaves the browser is when
-              you switch on an AI tool, and we say so at the switch.
+              No account is required. Cloud OCR is off by default. See our Privacy & Data Handling page for uploads, providers and browser storage.
             </p>
           </div>
         </div>

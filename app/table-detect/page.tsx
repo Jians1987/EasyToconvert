@@ -159,6 +159,7 @@ function drawOverlay(
 type Step = "idle" | "processing" | "done" | "error";
 
 export default function TableDetectPage() {
+  const [allowCloudOcr, setAllowCloudOcr] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [isPdf, setIsPdf] = useState(false);
   const [totalPages, setTotalPages] = useState(1);
@@ -236,7 +237,7 @@ export default function TableDetectPage() {
       }
 
       sourceCanvasRef.current = canvas;
-      const res = await extractTables(canvas, textItems, onProgress);
+      const res = await extractTables(canvas, textItems, onProgress, allowCloudOcr);
       setResult(res);
       setActiveTable(0);
       setTimeout(() => redrawOverlay(res), 50);
@@ -290,7 +291,7 @@ export default function TableDetectPage() {
   return (
     <ToolLayout
       title="Table Detection & Extraction"
-      description="Research-grade table detection using Microsoft's Table Transformer (TATR) — trained on PubTables-1M. Locate tables in any PDF or image, recognise rows & columns, extract structured data, and export to CSV, JSON, or Excel. Detection runs in your browser via ONNX Runtime Web. PDFs with a text layer stay fully on-device; scanned pages and images fall back to cloud OCR, which uploads each detected row."
+      description="Research-grade table detection using Microsoft's Table Transformer (TATR) — trained on PubTables-1M. Locate tables in any PDF or image, recognise rows & columns, extract structured data, and export to CSV, JSON, or Excel. Detection runs in your browser via ONNX Runtime Web. PDFs with a text layer stay fully on-device; scanned pages and images use cloud OCR only when you enable it, uploading each detected row."
       category="ai"
     >
       <div className="space-y-6">
@@ -366,6 +367,7 @@ export default function TableDetectPage() {
           </div>
         )}
 
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={allowCloudOcr} onChange={e => setAllowCloudOcr(e.target.checked)} disabled={step === "processing"} />Allow cloud OCR for scanned pages (uploads detected rows)</label>
         {/* Run button */}
         <button
           onClick={runDetection}
@@ -539,7 +541,7 @@ export default function TableDetectPage() {
                         Structure detected ({result.tables[activeTable].rows.length} rows, {result.tables[activeTable].columns.length} cols) but no text was extracted.
                       </p>
                       <p className="text-[10px] text-slate-400">
-                        For scanned images, each detected row is sent to the cloud OCR service automatically. To keep everything on your device, use a PDF with a selectable text layer.
+                        For scanned images, enable cloud OCR and run detection again to extract text. Leave it off to keep your file on your device.
                       </p>
                     </div>
                   )}

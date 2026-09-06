@@ -21,8 +21,7 @@ export default function Footer() {
             </Link>
             <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm leading-relaxed">
               Easytoconvert provides browser-based file conversion, code styling, data transformation, and media
-              optimization tools. PDF, image, data and developer tools run entirely on your device; the AI tools
-              call a server and are labelled wherever they appear.
+              optimization tools. Most tools run on your device. PDF compression, Adobe export and cloud AI upload data as labelled in each tool.
             </p>
             <div className="flex space-x-4 pt-2">
               <div className="flex items-center space-x-1.5 text-xs text-slate-400">
@@ -102,6 +101,7 @@ export default function Footer() {
           <div>
             <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-200 mb-4">Platform</h4>
             <ul className="space-y-2 text-xs">
+              <li><Link href="/privacy" className="text-slate-500 dark:text-slate-400 hover:text-primary transition-all">Privacy &amp; Data Handling</Link></li>
               <li><Link href="/about" className="text-slate-500 dark:text-slate-400 hover:text-primary transition-all">About Us</Link></li>
               <li><Link href="/contact" className="text-slate-500 dark:text-slate-400 hover:text-primary transition-all">Contact</Link></li>
               <li><Link href="/dashboard" className="text-slate-500 dark:text-slate-400 hover:text-primary transition-all">My Activity</Link></li>

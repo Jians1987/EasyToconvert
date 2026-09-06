@@ -89,7 +89,7 @@ export function HomeClient() {
       title: "Table Detection",
       icon: Table2,
       color: "from-rose-500/20 to-pink-500/20 text-rose-500 border-rose-500/30",
-      description: "Research-grade AI table detection powered by Microsoft Table Transformer (TATR). Locate tables in any PDF or image, extract rows & columns, export to CSV / JSON / Excel. Detection runs on-device; scanned pages use cloud OCR.",
+      description: "Research-grade AI table detection powered by Microsoft Table Transformer (TATR). Locate tables in any PDF or image, extract rows & columns, export to CSV / JSON / Excel. Detection runs on-device; scanned pages can use optional cloud OCR.",
       tools: ["Table Detector", "Structure Recognition", "CSV Export", "Excel Export", "JSON Export"],
       path: "/table-detect",
     },
@@ -229,7 +229,7 @@ export function HomeClient() {
             How Your Files Are Handled
           </h2>
           <p className="text-sm text-slate-500 dark:text-slate-400 max-w-xl mx-auto">
-            Most tools here never send your file anywhere. The few that use cloud AI say so before you run them.
+            Most tools here never send your file anywhere. Server and cloud tools explain uploads before you run them.
           </p>
         </div>
 
@@ -242,8 +242,7 @@ export function HomeClient() {
               Processed in your browser
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed max-w-xs mx-auto">
-              PDF, image, data and developer tools run on your own device using WebAssembly. Your file never
-              leaves the tab.
+              Image, data, developer and most PDF tools run on your device. PDF compression uploads to our server; optional Adobe export and cloud AI send data to a provider.
             </p>
           </div>
           <div className="space-y-2">
@@ -254,7 +253,7 @@ export function HomeClient() {
               No account, no watermarks
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed max-w-xs mx-auto">
-              Every tool is free and open to use immediately. No sign-up wall, no daily limits, nothing stamped
+              Tools are free to use without an account. Server and cloud tools have usage limits; nothing is stamped
               on your output.
             </p>
           </div>

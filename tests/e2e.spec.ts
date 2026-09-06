@@ -158,6 +158,7 @@ test.describe("JS & CSS tools", () => {
     await page.getByRole("button", { name: "Minifier" }).click();
     await page.locator(inputArea).fill("const x = a - -b; // a comment\nconst y = 1;");
     await page.getByRole("button", { name: /Apply JS Minification/i }).click();
+    await expect(page.locator(outputArea)).not.toHaveValue("");
     const out = await page.locator(outputArea).inputValue();
     expect(out).not.toContain("a--b"); // operators not mangled
     expect(out).not.toContain("comment"); // comment stripped

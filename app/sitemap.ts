@@ -5,6 +5,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
   const now = new Date();
 
   return [
+    { url: `${baseUrl}/privacy`, changeFrequency: "monthly", priority: 0.3 },
     {
       url: baseUrl,
       lastModified: now,

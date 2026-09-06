@@ -246,7 +246,8 @@ async function ocrTableGrid(
 export async function extractTables(
   canvas: HTMLCanvasElement,
   textItems?: PdfTextItem[],
-  onProgress?: ProgressFn
+  onProgress?: ProgressFn,
+  allowCloudOcr = false
 ): Promise<ExtractionResult> {
   const t0 = Date.now();
 
@@ -318,7 +319,7 @@ export async function extractTables(
     if (textItems && textItems.length > 0) {
       // Fast path: use PDF.js text positions
       grid = buildGrid(rows, cols, textItems, bbox, canvas.width, canvas.height);
-    } else if (rows.length > 0 && cols.length > 0) {
+    } else if (allowCloudOcr && rows.length > 0 && cols.length > 0) {
       // Slow path: per-row OCR — uploads crops to the OCR service
       grid = await ocrTableGrid(tableCrop, rows, cols, onProgress);
     }

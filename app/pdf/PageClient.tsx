@@ -6,15 +6,17 @@ import Dropzone from "@/components/Dropzone";
 import { useConversions } from "@/app/providers";
 import { ocrImageWithUnlimitedOcr } from "@/app/lib/ocr";
 import { loadPdfJs } from "@/app/lib/loadPdfJs";
-import { convertPdfToDocx, type DocxProgress, type ConvertDocxOptions } from "@/app/lib/pdfToDocx";
-import { convertPdfToMarkdown } from "@/app/lib/pdfToMarkdown";
-import { convertMarkdownToPdf, type PageSize as MdPageSize } from "@/app/lib/markdownToPdf";
-import { extractPdfText } from "@/app/lib/pdfTextExtractor";
-import { convertPdfToXlsx, type XlsxProgress, type TableEngine } from "@/app/lib/pdfToXlsx";
-import { renderPdfWithPdfium } from "@/app/lib/pdfiumRenderer";
-import { extractTables, type PdfTextItem } from "@/app/lib/tableExtractor";
+import type { DocxProgress, ConvertDocxOptions } from "@/app/lib/pdfToDocx";
+const convertPdfToDocx = async (...args: Parameters<typeof import("@/app/lib/pdfToDocx").convertPdfToDocx>) => (await import("@/app/lib/pdfToDocx")).convertPdfToDocx(...args);
+const convertPdfToMarkdown = async (...args: Parameters<typeof import("@/app/lib/pdfToMarkdown").convertPdfToMarkdown>) => (await import("@/app/lib/pdfToMarkdown")).convertPdfToMarkdown(...args);
+import type { PageSize as MdPageSize } from "@/app/lib/markdownToPdf";
+const convertMarkdownToPdf = async (...args: Parameters<typeof import("@/app/lib/markdownToPdf").convertMarkdownToPdf>) => (await import("@/app/lib/markdownToPdf")).convertMarkdownToPdf(...args);
+const extractPdfText = async (...args: Parameters<typeof import("@/app/lib/pdfTextExtractor").extractPdfText>) => (await import("@/app/lib/pdfTextExtractor")).extractPdfText(...args);
+import type { XlsxProgress, TableEngine } from "@/app/lib/pdfToXlsx";
+const convertPdfToXlsx = async (...args: Parameters<typeof import("@/app/lib/pdfToXlsx").convertPdfToXlsx>) => (await import("@/app/lib/pdfToXlsx")).convertPdfToXlsx(...args);
+const renderPdfWithPdfium = async (...args: Parameters<typeof import("@/app/lib/pdfiumRenderer").renderPdfWithPdfium>) => (await import("@/app/lib/pdfiumRenderer")).renderPdfWithPdfium(...args);
+import type { PdfTextItem } from "@/app/lib/tableExtractor";
 import { PDFDocument, degrees, rgb, StandardFonts } from "pdf-lib-plus-encrypt";
-import { Document, Packer, Paragraph, TextRun, HeadingLevel, BorderStyle, ImageRun } from "docx";
 import {
   FileText, Star, AlertTriangle, Download, Image as ImageIcon, Type, FileSpreadsheet, Sparkles,
   Trash2, RotateCw, ArrowUp, ArrowDown, Plus, Square, Circle as CircleIcon, PenTool, Edit3,
@@ -331,7 +333,7 @@ export function PdfPageClient() {
   // Defaults to the in-browser engine: it keeps the file on the device, which
   // is the promise the rest of the site makes. Adobe is opt-in.
   const [docEngine, setDocEngine] = useState<"browser" | "adobe">("browser");
-  const [ocrEnabled, setOcrEnabled] = useState(true);
+  const [ocrEnabled, setOcrEnabled] = useState(false);
   const [ocrEngine, setOcrEngine] = useState<"unlimited">("unlimited");
 
   // Compression level for PDF → Compress. Maps to a JPEG quality + downsample
@@ -773,7 +775,6 @@ export function PdfPageClient() {
 
     try {
       const { PDFDocument: PdfLibDocument, degrees, rgb, StandardFonts } = await import("pdf-lib-plus-encrypt");
-      const { Document, Packer, Paragraph, TextRun, HeadingLevel, ImageRun } = await import("docx");
 
       // Handle encrypted PDFs
       const loadWithPassword = async (file: File) => {
@@ -1516,8 +1517,7 @@ export function PdfPageClient() {
                     </div>
                   ) : (
                     <p className="text-[10px] text-slate-400 leading-relaxed">
-                      Runs entirely on your device — the file never leaves the browser. Choose how faithful the
-                      output should be below.
+                      Runs on your device unless you enable cloud OCR below, which uploads scanned pages. Choose how faithful the output should be.
                     </p>
                   )}
                 </div>
@@ -1556,7 +1556,7 @@ export function PdfPageClient() {
                     })}
                   </div>
                   <p className="text-[10px] text-slate-400 leading-relaxed">
-                    {docFidelity === "layout" && "Detects headings, paragraphs, bold/italic, and tables. Reflows text — best for re-editing prose. Scanned pages are auto-OCR'd."}
+                    {docFidelity === "layout" && "Detects headings, paragraphs, bold/italic, and tables. Reflows text — best for re-editing prose. Enable cloud OCR below to extract scanned text."}
                     {docFidelity === "exact" && "Places every line at its original position and re-embeds logos/photos, staying fully editable. Best for clean editing. Note: vector lines/borders/shading aren't reproduced."}
                     {docFidelity === "hybrid" && "Full visual replica: the exact page image sits behind editable text on top. Reproduces all graphics. Best for pixel-accuracy. Larger files; edits may seam on coloured backgrounds."}
                     {docFidelity === "image" && "Renders each page as a 3× resolution image — pixel-perfect but not editable."}
@@ -1575,6 +1575,7 @@ export function PdfPageClient() {
                       <label className="flex items-center gap-1.5 cursor-pointer">
                         <input
                           type="checkbox"
+                          aria-label="Allow cloud OCR for scanned pages"
                           checked={ocrEnabled}
                           onChange={(e) => setOcrEnabled(e.target.checked)}
                           className="rounded border-slate-300 text-indigo-600"

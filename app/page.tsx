@@ -6,7 +6,7 @@ const siteUrl = "https://www.easytoconvert.in";
 export const metadata: Metadata = {
   title: "EasyToConvert – Free Online PDF, Image & Developer Tools",
   description:
-    "Free online tools to merge, split, edit & convert PDFs, compress & resize images, beautify JSON/CSV, generate QR codes, run OCR, and compress media — all in your browser. No uploads, 100% private.",
+    "Free online tools to merge, split, edit & convert PDFs, compress & resize images, beautify JSON/CSV, generate QR codes, run OCR, and compress media — local-first processing, with clearly labelled server and cloud options.",
   alternates: {
     canonical: siteUrl,
   },

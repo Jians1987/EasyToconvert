@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { clientKey, rateLimit, transcriptionRules, transcriptionGlobalRules } from "@/app/lib/rateLimit";
 
 // Groq doesn't publish a hard cap for /audio/transcriptions; this is a
 // conservative safety limit so a huge upload fails fast with a clear message
@@ -17,6 +18,22 @@ export async function POST(req: Request) {
     const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) {
       return NextResponse.json({ error: "Transcription is not configured" }, { status: 503 });
+    }
+
+    try {
+      const options = { requireShared: process.env.NODE_ENV === "production" };
+      const client = await rateLimit(`transcribe:client:${clientKey(req)}`, transcriptionRules(), options);
+      const verdict = client.ok
+        ? await rateLimit("transcribe:global", transcriptionGlobalRules(), options)
+        : client;
+      if (!verdict.ok) {
+        return NextResponse.json(
+          { code: "RATE_LIMITED", error: "Transcription limit reached. Please try again later.", retryAfterSeconds: verdict.retryAfterSeconds },
+          { status: 429, headers: { "Retry-After": String(verdict.retryAfterSeconds) } }
+        );
+      }
+    } catch {
+      return NextResponse.json({ error: "Transcription is temporarily unavailable. Please try again later." }, { status: 503 });
     }
 
     let incomingForm: FormData;
@@ -50,6 +67,7 @@ export async function POST(req: Request) {
         method: "POST",
         headers: { Authorization: `Bearer ${apiKey}` },
         body: upstreamForm,
+        signal: AbortSignal.timeout(90_000),
       });
     } catch {
       return NextResponse.json({ error: "Groq is unreachable" }, { status: 502 });

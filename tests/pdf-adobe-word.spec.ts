@@ -32,7 +32,7 @@ test("in-browser engine is the default and keeps the output modes visible", asyn
   await expect(page.getByRole("button", { name: /Adobe High Quality/ })).toBeVisible();
   // Fidelity options belong to the browser engine, so they show by default.
   await expect(page.getByRole("button", { name: "Structured (Editable)" })).toBeVisible();
-  await expect(page.getByText(/never leaves the browser/i)).toBeVisible();
+  await expect(page.getByText(/Runs on your device unless you enable cloud OCR/i)).toBeVisible();
 
   await page.getByRole("button", { name: "Process PDF to Word" }).click();
   await expect(page.getByRole("link", { name: "Download .docx" })).toBeVisible({ timeout: 20_000 });

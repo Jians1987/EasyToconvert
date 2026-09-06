@@ -5,6 +5,8 @@ import ToolLayout from "@/components/ToolLayout";
 import { useConversions } from "@/app/providers";
 import { Sliders, Copy, Check, Star, RefreshCw, Layers } from "lucide-react";
 
+import { minifyCode } from "@/app/lib/minifyCode";
+
 type CodeMode = "gradient" | "shadow" | "minify" | "html-beautify";
 
 export function JavascriptPageClient() {
@@ -29,6 +31,8 @@ export function JavascriptPageClient() {
   // Minifier Config
   const [inputText, setInputText] = useState("");
   const [outputText, setOutputText] = useState("");
+  const [minifyError, setMinifyError] = useState<string | null>(null);
+  const [minifying, setMinifying] = useState(false);
   const [codeType, setCodeType] = useState<"js" | "html" | "css">("js");
 
   const getGradientCss = () => {
@@ -57,33 +61,17 @@ export function JavascriptPageClient() {
     setTimeout(() => setCopiedShadow(false), 2000);
   };
 
-  const handleMinify = () => {
-    if (!inputText.trim()) return;
-    let minified = "";
-    if (codeType === "js" || codeType === "css") {
-      // Basic minify — remove comments and collapse whitespace only around safe structural chars
-      minified = inputText
-        .replace(/\/\*[\s\S]*?\*\/|([^\\:]|^)\/\/.*$/gm, "$1") // strip block & line comments
-        .replace(/\s+/g, " ")                                    // collapse whitespace
-        .replace(/\s*([{};,])\s*/g, "$1")                       // safe: braces, semicolons, commas
-        .replace(/\s*:\s*/g, ":")                                // colon (CSS properties / object keys)
-        .trim();
-    } else {
-      // HTML minify
-      minified = inputText
-        .replace(/<!--[\s\S]*?-->/g, "")
-        .replace(/\s+/g, " ")
-        .replace(/>\s+</g, "><")
-        .trim();
-    }
-    setOutputText(minified);
-
-    addHistoryItem({
-      fileName: `minified_${codeType}_${Date.now()}.txt`,
-      fileSize: inputText.length,
-      toolType: `javascript-minify-${codeType}`,
-      status: "success",
-    });
+  const handleMinify = async () => {
+    if (!inputText.trim() || minifying) return;
+    setMinifying(true);
+    setMinifyError(null);
+    setOutputText("");
+    try {
+      setOutputText(await minifyCode(inputText, codeType));
+      addHistoryItem({ fileName: `minified_${codeType}_${Date.now()}.txt`, fileSize: inputText.length, toolType: `javascript-minify-${codeType}`, status: "success" });
+    } catch (error) {
+      setMinifyError(error instanceof Error ? error.message : "Unable to minify this code.");
+    } finally { setMinifying(false); }
   };
 
   const handleHtmlBeautify = () => {
@@ -388,8 +376,10 @@ export function JavascriptPageClient() {
               </div>
             </div>
 
+            {minifyError && <p role="alert" className="text-sm text-red-500">{minifyError}</p>}
             <div className="pt-2">
               <button
+                disabled={minifying}
                 onClick={mode === "minify" ? handleMinify : handleHtmlBeautify}
                 className="px-6 py-2.5 rounded-lg text-xs font-semibold bg-indigo-600 text-white shadow-md"
               >
