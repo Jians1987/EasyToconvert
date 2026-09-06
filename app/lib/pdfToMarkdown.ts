@@ -199,6 +199,33 @@ export function blockToMarkdown(block: PdfTextBlock, medianFontSize: number): st
 }
 
 /**
+ * groupIntoBlocks splits on any inter-line gap exceeding 0.8× the line's
+ * height. Real tables often use row spacing just over that threshold for
+ * readability (e.g. 20pt rows at an 11pt line height — a 9pt gap against an
+ * 8.8pt threshold) — a hair's-breadth miss that splits one 3-row table into
+ * three separate single-row blocks, each independently still classified as
+ * isTableRow. Rather than loosen the shared threshold (used by PDF → Word's
+ * heading/paragraph grouping too — a global change risks regressing already-
+ * shipped, tested behaviour there), coalesce table blocks after the fact:
+ * merge any block into the previous one when both are independently
+ * classified as table rows. Only `.lines` matters for table rendering
+ * (blockToMarkdownTable never reads the other block fields), so the merge is
+ * a pure concatenation.
+ */
+function mergeAdjacentTableBlocks(blocks: PdfTextBlock[]): PdfTextBlock[] {
+  const merged: PdfTextBlock[] = [];
+  for (const block of blocks) {
+    const prev = merged[merged.length - 1];
+    if (block.isTableRow && prev?.isTableRow) {
+      prev.lines.push(...block.lines);
+      continue;
+    }
+    merged.push({ ...block, lines: [...block.lines] });
+  }
+  return merged;
+}
+
+/**
  * Convert a PDF file to Markdown. Runs entirely in the browser: text-layer
  * pages are analysed locally using the same heuristics as PDF → Word; scanned
  * pages are uploaded to the configured OCR provider in "structured" mode,
@@ -240,7 +267,8 @@ export async function convertPdfToMarkdown(
       const parts: string[] = [];
       for (const colItems of columns) {
         const lines = groupIntoLines(colItems);
-        const { blocks, medianFontSize } = groupIntoBlocks(lines);
+        const { blocks: rawBlocks, medianFontSize } = groupIntoBlocks(lines);
+        const blocks = mergeAdjacentTableBlocks(rawBlocks);
         for (const block of blocks) {
           const md = blockToMarkdown(block, medianFontSize);
           if (md) parts.push(md);
