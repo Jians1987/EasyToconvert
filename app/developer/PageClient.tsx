@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { useToolMode } from "@/app/lib/toolLaunch";
 import ToolLayout from "@/components/ToolLayout";
 import { useConversions } from "@/app/providers";
 import QRCode from "qrcode";
@@ -10,6 +11,7 @@ type DevMode = "base64" | "url" | "uuid" | "password" | "qrcode";
 
 export function DeveloperPageClient() {
   const [mode, setMode] = useState<DevMode>("base64");
+  useToolMode<DevMode>(setMode, ["base64","url","uuid","password","qrcode"]);
   const [inputText, setInputText] = useState("");
   const [outputText, setOutputText] = useState("");
   const [copied, setCopied] = useState(false);

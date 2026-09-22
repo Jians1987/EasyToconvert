@@ -2,6 +2,15 @@
 @tailwind components;
 @tailwind utilities;
 
+@keyframes quick-actions-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.quick-actions, .command-dialog[open] { animation: quick-actions-enter 180ms ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .quick-actions, .command-dialog[open], .animate-pulse-slow { animation: none; }
+}
+
 @layer base {
   :root {
     --background: 210 40% 98%;

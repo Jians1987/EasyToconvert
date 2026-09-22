@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
+import { useToolMode } from "@/app/lib/toolLaunch";
 import ToolLayout from "@/components/ToolLayout";
 import Dropzone from "@/components/Dropzone";
 import { useConversions } from "@/app/providers";
@@ -10,6 +11,7 @@ type ImageMode = "convert" | "compress" | "resize" | "metadata";
 
 export function ImagePageClient() {
   const [mode, setMode] = useState<ImageMode>("convert");
+  useToolMode<ImageMode>(setMode, ["convert","compress","resize","metadata"], (hash) => { if (hash === "svg-png") { setMode("convert"); setTargetFormat("image/png"); return true; } if (hash === "convert") setTargetFormat("image/webp"); return false; });
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [processing, setProcessing] = useState(false);
   const [targetFormat, setTargetFormat] = useState("image/webp");

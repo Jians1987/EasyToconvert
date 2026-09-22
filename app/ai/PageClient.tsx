@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { useToolMode } from "@/app/lib/toolLaunch";
 import ToolLayout from "@/components/ToolLayout";
 import Dropzone from "@/components/Dropzone";
 import { useConversions } from "@/app/providers";
@@ -113,6 +114,7 @@ async function callDeepSeekAPI(prompt: string, systemPrompt?: string) {
 
 export function AiPageClient() {
   const [mode, setMode] = useState<AiMode>("summarize");
+  useToolMode<AiMode>(setMode, ["summarize","ocr","explain","translate"]);
   const [inputText, setInputText] = useState("");
   const [outputText, setOutputText] = useState("");
   const [processing, setProcessing] = useState(false);

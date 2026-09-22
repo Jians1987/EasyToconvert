@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useRef, useState } from "react";
+import { useToolMode } from "@/app/lib/toolLaunch";
 import ToolLayout from "@/components/ToolLayout";
 import Dropzone from "@/components/Dropzone";
 import { useConversions } from "@/app/providers";
@@ -15,6 +16,7 @@ const CORE_BASE = "https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd";
 
 export function MediaPageClient() {
   const [mode, setMode] = useState<MediaMode>("compress");
+  useToolMode<MediaMode>(setMode, ["compress","extract","audio-trim"]);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [targetBitrate, setTargetBitrate] = useState(128);
   const [audioFormat, setAudioFormat] = useState<"mp3" | "wav">("mp3");

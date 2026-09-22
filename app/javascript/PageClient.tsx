@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { useToolMode } from "@/app/lib/toolLaunch";
 import ToolLayout from "@/components/ToolLayout";
 import { useConversions } from "@/app/providers";
 import { Sliders, Copy, Check, Star, RefreshCw, Layers } from "lucide-react";
@@ -9,6 +10,7 @@ type CodeMode = "gradient" | "shadow" | "minify" | "html-beautify";
 
 export function JavascriptPageClient() {
   const [mode, setMode] = useState<CodeMode>("gradient");
+  useToolMode<CodeMode>(setMode, ["gradient","shadow","minify","html-beautify"]);
   const [copiedGradient, setCopiedGradient] = useState(false);
   const [copiedShadow, setCopiedShadow] = useState(false);
   const { addHistoryItem, favorites, toggleFavorite } = useConversions();

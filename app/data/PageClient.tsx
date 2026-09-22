@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { useToolMode, useStagedFile } from "@/app/lib/toolLaunch";
 import ToolLayout from "@/components/ToolLayout";
 import { useConversions } from "@/app/providers";
 import yaml from "js-yaml";
@@ -10,11 +11,17 @@ type DataMode = "json-format" | "csv-json" | "xml-json" | "json-yaml";
 
 export function DataPageClient() {
   const [mode, setMode] = useState<DataMode>("json-format");
+  useToolMode<DataMode>(setMode, ["json-format","csv-json","xml-json","json-yaml"]);
   const [inputText, setInputText] = useState("");
   const [outputText, setOutputText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const { addHistoryItem, favorites, toggleFavorite } = useConversions();
+
+  useStagedFile((file) => {
+    if (file.size > 10 * 1024 * 1024) { setError("Please choose a data file smaller than 10 MB."); return; }
+    file.text().then(setInputText).catch(() => setError("Unable to read this file. Please select it again."));
+  });
 
   const handleAction = (action: "beautify" | "minify" | "validate" | "convert") => {
     setError(null);
@@ -33,6 +40,16 @@ export function DataPageClient() {
         }
       } else if (mode === "csv-json") {
         if (action === "convert") {
+          if (inputText.trim().startsWith("[")) {
+            const rows: unknown = JSON.parse(inputText);
+            if (!Array.isArray(rows) || !rows.length || rows.some((row) => !row || typeof row !== "object" || Array.isArray(row))) {
+              throw new Error("Use a non-empty JSON array of objects to convert to CSV.");
+            }
+            const headers = Array.from(new Set(rows.flatMap((row) => Object.keys(row))));
+            const escape = (value: unknown) => `"${String(typeof value === "object" && value !== null ? JSON.stringify(value) : value ?? "").replace(/"/g, '""')}"`;
+            setOutputText([headers.map(escape).join(","), ...rows.map((row) => headers.map((key) => escape(row[key])).join(","))].join("\r\n"));
+            return;
+          }
           // CSV to JSON — RFC 4180 compliant parser supporting quoted fields with commas
           const parseCsvLine = (line: string): string[] => {
             const fields: string[] = [];
@@ -293,7 +310,7 @@ export function DataPageClient() {
               onClick={() => handleAction("convert")}
               className="px-5 py-2.5 rounded-lg text-xs font-semibold bg-indigo-600 text-white shadow-md hover:opacity-90 transition-all"
             >
-              CSV to JSON
+              {inputText.trim().startsWith("[") ? "JSON to CSV" : "CSV to JSON"}
             </button>
           )}
 

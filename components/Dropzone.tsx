@@ -1,5 +1,6 @@
 "use client";
 
+import { useStagedFile } from "@/app/lib/toolLaunch";
 import React, { useState, useRef } from "react";
 import { UploadCloud, File, X, AlertCircle } from "lucide-react";
 
@@ -31,6 +32,12 @@ export default function Dropzone({
       const pattern = rawPattern.trim().toLowerCase();
       const mime = file.type.toLowerCase();
       const name = file.name.toLowerCase();
+      if (!mime || mime === "application/octet-stream") {
+        if (pattern === "application/pdf" && name.endsWith(".pdf")) return true;
+        if (pattern === "image/*" && /\.(png|jpe?g|webp|gif|bmp|svg|avif)$/.test(name)) return true;
+        if (pattern === "video/*" && /\.(mp4|webm|mov)$/.test(name)) return true;
+        if (pattern === "audio/*" && /\.(mp3|wav|ogg|m4a)$/.test(name)) return true;
+      }
       if (pattern.startsWith(".")) return name.endsWith(pattern);
       if (pattern.endsWith("/*")) return mime.startsWith(pattern.slice(0, -1));
       return mime === pattern;
@@ -61,6 +68,12 @@ export default function Dropzone({
       onFilesSelected(newQueue);
     }
   };
+
+  useStagedFile((file) => {
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    processFiles(transfer.files);
+  });
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();

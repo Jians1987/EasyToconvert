@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useMemo, useEffect, useRef } from "react";
+import { useToolMode } from "@/app/lib/toolLaunch";
 import ToolLayout from "@/components/ToolLayout";
 import Dropzone from "@/components/Dropzone";
 import { useConversions } from "@/app/providers";
@@ -227,6 +228,7 @@ const getAnnBounds = (ann: Annotation) => {
 
 export function PdfPageClient() {
   const [mode, setMode] = useState<PdfMode>("merge");
+  useToolMode<PdfMode>(setMode, ["merge","split","rotate","to-doc","to-excel","to-image","edit"]);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [processing, setProcessing] = useState(false);
   const [pdfPassword, setPdfPassword] = useState("");

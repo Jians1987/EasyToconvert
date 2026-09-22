@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
+import ConversionHero from "@/components/ConversionHero";
 import {
   FileText,
   Image as ImageIcon,
@@ -127,11 +128,13 @@ export function HomeClient() {
             Easytoconvert is a privacy-first web workspace offering image compression, PDF compilers, data formatters, encoders, generators, and smart AI capabilities.
           </p>
 
+          <ConversionHero />
           <div className="max-w-xl mx-auto pt-4 px-4">
             <div className="relative glass-card p-1.5 flex items-center border-slate-300/80 dark:border-slate-800 shadow-2xl">
               <Search className="w-5 h-5 text-slate-400 ml-3" />
               <input
                 type="text"
+                aria-label="Filter tool categories"
                 placeholder="Search PDF to Word, Image compression, QR code, Table Detection..."
                 className="flex-grow bg-transparent text-sm py-2.5 px-3 outline-none placeholder-slate-400"
                 value={searchQuery}

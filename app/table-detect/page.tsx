@@ -200,7 +200,7 @@ export default function TableDetectPage() {
     setActiveTable(0);
     setStep("idle");
     setCurrentPage(1);
-    const pdf = f.type === "application/pdf";
+    const pdf = f.type === "application/pdf" || /\.pdf$/i.test(f.name);
     setIsPdf(pdf);
     if (pdf) {
       try {
