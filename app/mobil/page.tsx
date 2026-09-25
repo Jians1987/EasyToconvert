@@ -2,7 +2,6 @@
 
 import React, { useState, useMemo, useEffect } from "react";
 import ToolLayout from "@/components/ToolLayout";
-import mobilDatabase from "../lib/mobil_database.json";
 import { Search, ShieldAlert, Download, FileSpreadsheet, Lock, CheckCircle2, AlertCircle, RefreshCw, Layers } from "lucide-react";
 
 interface SKU {
@@ -33,18 +32,27 @@ export default function MobilSheetsConverter() {
   const [isExporting, setIsExporting] = useState(false);
   const [exportStatus, setExportStatus] = useState<{ type: "success" | "error" | "info"; msg: string } | null>(null);
 
+  // Lazy-loaded database fetched from public/data on demand
+  const [mobilDatabase, setMobilDatabase] = useState<SKU[]>([]);
+  useEffect(() => {
+    fetch("/data/mobil_database.json")
+      .then((res) => res.json())
+      .then((data: SKU[]) => setMobilDatabase(data))
+      .catch((e) => console.error("Failed to load mobil database", e));
+  }, []);
+
   // Available filters
   const sections = useMemo(() => {
     const s = new Set<string>();
-    (mobilDatabase as SKU[]).forEach((item) => s.add(item.section));
+    mobilDatabase.forEach((item) => s.add(item.section));
     return ["All", ...Array.from(s)];
-  }, []);
+  }, [mobilDatabase]);
 
   const subcategories = ["All", "Flagship", "Premium", "Standard"];
 
   // Filtered SKUs
   const filteredSKUs = useMemo(() => {
-    return (mobilDatabase as SKU[]).filter((item) => {
+    return mobilDatabase.filter((item) => {
       const matchSearch =
         item.material_code.includes(search) ||
         item.description.toLowerCase().includes(search.toLowerCase());
@@ -52,7 +60,7 @@ export default function MobilSheetsConverter() {
       const matchSubcat = subcatFilter === "All" || item.subcategory === subcatFilter;
       return matchSearch && matchSection && matchSubcat;
     });
-  }, [search, sectionFilter, subcatFilter]);
+  }, [mobilDatabase, search, sectionFilter, subcatFilter]);
 
   // Load GIS API script for OAuth
   useEffect(() => {

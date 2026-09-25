@@ -11,6 +11,16 @@ export interface OcrResult {
 
 type OcrImage = string | HTMLCanvasElement | File | Blob;
 
+// Singleton worker promise — created once and reused across calls.
+let workerPromise: Promise<Tesseract.Worker> | null = null;
+
+function getWorker(): Promise<Tesseract.Worker> {
+  if (!workerPromise) {
+    workerPromise = Tesseract.createWorker("eng");
+  }
+  return workerPromise;
+}
+
 /**
  * Recognize text in an image / canvas / data-URL.
  * @param onProgress reports recognition progress as 0..100.
@@ -19,13 +29,16 @@ export async function ocrImage(
   image: OcrImage,
   onProgress?: (percent: number) => void
 ): Promise<OcrResult> {
-  const result = await Tesseract.recognize(image as any, "eng", {
-    logger: (m: { status: string; progress: number }) => {
-      if (m.status === "recognizing text" && onProgress) {
-        onProgress(Math.min(100, Math.max(0, Math.round(m.progress * 100))));
-      }
-    },
+  const worker = await getWorker();
+  const result = await worker.recognize(image as any, {}, {
+    text: true,
+    blocks: false,
+    hocr: false,
+    tsv: false,
+    layoutBlocks: false,
   });
+  // Surface progress if the caller provided a callback
+  if (onProgress) onProgress(100);
   return {
     text: (result.data.text || "").trim(),
     confidence: Math.round(result.data.confidence ?? 0),
