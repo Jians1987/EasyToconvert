@@ -65,8 +65,9 @@ test.describe("Navbar", () => {
 
   test("quick-search dropdown lists matches", async ({ page }) => {
     await page.goto("/");
-    await page.getByPlaceholder("Quick find tool...").fill("base64");
-    await expect(page.getByRole("link", { name: /Base64 Encoder/i })).toBeVisible();
+    await page.getByRole("button", { name: "Search tools", exact: true }).click();
+    await page.getByRole("dialog").getByRole("combobox").fill("base64");
+    await expect(page.getByRole("option", { name: /Base64/i }).first()).toBeVisible();
   });
 
   test("mobile menu opens and navigates", async ({ page }) => {
@@ -206,6 +207,20 @@ test.describe("AI tools", () => {
     await page.getByRole("button", { name: /Run AI translate/i }).click();
     // scope to the output panel — the engine banner also mentions "translation previews"
     await expect(page.locator(".prose").getByText(/DeepSeek Translation/i)).toBeVisible();
+  });
+
+  test("unconfigured cloud AI shows a readable error, not raw JSON", async ({ page }) => {
+    await page.route("**/api/ai", (route) => route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "AI tools are not configured" }),
+    }));
+    await page.goto("/ai");
+    await page.getByRole("button", { name: "Document Translator" }).click();
+    await page.locator(inputArea).fill("Hello world");
+    await page.getByRole("button", { name: /Run AI translate/i }).click();
+    await expect(page.getByText(/Cloud AI features aren't available/i)).toBeVisible();
+    await expect(page.getByText(/\{"error"/)).toHaveCount(0);
   });
 
   test("summarize button is disabled until a file is chosen", async ({ page }) => {

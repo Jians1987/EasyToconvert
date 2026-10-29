@@ -16,27 +16,13 @@ import {
   Trash2, RotateCw, ArrowUp, ArrowDown, Plus, Square, Circle as CircleIcon, PenTool, Edit3,
   Paintbrush, ChevronsUpDown, MousePointer, Check, ArrowRight, Upload, Signature
 } from "lucide-react";
+import { loadPdfJs } from "@/app/lib/pdfjs";
+import { postAi } from "@/app/lib/aiClient";
 
 // Cloud-AI table extraction (opt-in). Uses the server-side proxy (/api/ai)
 // to securely call NVIDIA's Nemotron OCR v2 model — API key is never exposed client-side.
 const extractTableWithNemotron = async (pngBase64: string): Promise<string[][]> => {
-  const res = await fetch("/api/ai", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      action: "nemotron-ocr",
-      imageBase64: pngBase64
-    })
-  });
-
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Nemotron OCR Proxy ${res.status}: ${errText.slice(0, 200)}`);
-  }
-
-  const data = await res.json();
+  const data = await postAi({ action: "nemotron-ocr", imageBase64: pngBase64 });
 
   // Nemotron-parse usually returns markdown table structures
   let markdown = data.text || "";
@@ -165,24 +151,6 @@ interface PageLayoutItem {
   rotation: number; // 0, 90, 180, 270
 }
 
-// Shared PDF.js loader
-const loadPdfJs = (): Promise<any> => {
-  return new Promise((resolve, reject) => {
-    if (typeof window !== "undefined" && (window as any).pdfjsLib) {
-      resolve((window as any).pdfjsLib);
-      return;
-    }
-    const script = document.createElement("script");
-    script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
-    script.onload = () => {
-      (window as any).pdfjsLib.GlobalWorkerOptions.workerSrc =
-        "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-      resolve((window as any).pdfjsLib);
-    };
-    script.onerror = () => reject(new Error("Failed to load PDF.js engine."));
-    document.head.appendChild(script);
-  });
-};
 
 const hexToUnit = (hex: string) => {
   const h = hex.replace("#", "");

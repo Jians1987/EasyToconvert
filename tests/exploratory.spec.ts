@@ -62,23 +62,25 @@ test.describe("Edge: invalid input handling", () => {
   });
 });
 
-// ── Navbar quick search ──
+// ── Navbar tool search (command palette) ──
 test.describe("Edge: navbar quick search", () => {
   test("no-match query is kept (not silently swallowed)", async ({ page }) => {
     await page.goto("/");
-    const box = page.getByPlaceholder("Quick find tool...");
+    await page.getByRole("button", { name: "Search tools", exact: true }).click();
+    const box = page.getByRole("dialog").getByRole("combobox");
     await box.fill("zzzznope");
     await box.press("Enter");
     await expect(box).toHaveValue("zzzznope");
-    await expect(page.getByText(/No tools match your query/i)).toBeVisible();
+    await expect(page.getByText(/No tools found/i)).toBeVisible();
   });
 
   test("matching query navigates to the tool", async ({ page }) => {
     await page.goto("/");
-    const box = page.getByPlaceholder("Quick find tool...");
+    await page.getByRole("button", { name: "Search tools", exact: true }).click();
+    const box = page.getByRole("dialog").getByRole("combobox");
     await box.fill("Merge");
     await box.press("Enter");
-    await expect(page).toHaveURL(/\/pdf$/);
+    await expect(page).toHaveURL(/\/pdf#merge$/);
   });
 });
 
@@ -118,5 +120,21 @@ test.describe("Edge: localStorage quota resilience", () => {
     // Output still produced, app did not crash
     await expect(page.locator("textarea[readonly]")).toHaveValue(/"a": 1/);
     expect(pageErrors).toEqual([]);
+  });
+});
+
+// ── Self-hosted engines (no third-party CDN dependency) ──
+test.describe("Edge: CDNs blocked (ad-blocker / firewall / outage)", () => {
+  test("PDF.js tools still work with every engine CDN unreachable", async ({ page }) => {
+    const cdnRequests: string[] = [];
+    await page.route(/cdnjs\.cloudflare\.com|unpkg\.com|cdn\.jsdelivr\.net/, (route) => {
+      cdnRequests.push(route.request().url());
+      return route.abort();
+    });
+    await page.goto("/pdf");
+    await page.getByRole("button", { name: "Edit" }).click();
+    await page.locator("input[type=file]").setInputFiles({ name: "e.pdf", mimeType: "application/pdf", buffer: await makePdf(1) });
+    await expect(page.locator('img[alt="Page 1"]')).toBeVisible({ timeout: 30000 });
+    expect(cdnRequests).toEqual([]);
   });
 });

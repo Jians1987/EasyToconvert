@@ -40,25 +40,8 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { useConversions } from "@/app/providers";
+import { loadPdfJs } from "@/app/lib/pdfjs";
 
-// ─── PDF.js loader ────────────────────────────────────────────────────────────
-const loadPdfJs = (): Promise<any> =>
-  new Promise((resolve, reject) => {
-    if (typeof window !== "undefined" && (window as any).pdfjsLib) {
-      resolve((window as any).pdfjsLib);
-      return;
-    }
-    const s = document.createElement("script");
-    s.src =
-      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
-    s.onload = () => {
-      (window as any).pdfjsLib.GlobalWorkerOptions.workerSrc =
-        "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-      resolve((window as any).pdfjsLib);
-    };
-    s.onerror = () => reject(new Error("Failed to load PDF.js"));
-    document.head.appendChild(s);
-  });
 
 // ─── Render one PDF page → canvas + text items ───────────────────────────────
 async function renderPdfPage(

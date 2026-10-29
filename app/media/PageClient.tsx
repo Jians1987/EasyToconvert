@@ -6,13 +6,36 @@ import ToolLayout from "@/components/ToolLayout";
 import Dropzone from "@/components/Dropzone";
 import { useConversions } from "@/app/providers";
 import { FFmpeg } from "@ffmpeg/ffmpeg";
-import { fetchFile, toBlobURL } from "@ffmpeg/util";
+import { fetchFile } from "@ffmpeg/util";
 import { Video, Music, Star, AlertTriangle, Download, Loader2, Cpu } from "lucide-react";
 
 type MediaMode = "compress" | "extract" | "audio-trim";
 
 // Single-threaded core — no SharedArrayBuffer, so no COOP/COEP headers required.
-const CORE_BASE = "https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd";
+// Served from our own origin (scripts/copy-vendor.mjs); the CDN is a fallback.
+const CORE_SOURCES = ["/vendor/ffmpeg", "https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd"];
+
+// Unlike toBlobURL, rejects on HTTP errors so a missing file falls through to the next source.
+const blobURL = async (url: string, type: string) => {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+  return URL.createObjectURL(new Blob([await res.arrayBuffer()], { type }));
+};
+
+const loadCore = async () => {
+  let lastError: unknown;
+  for (const base of CORE_SOURCES) {
+    try {
+      return await Promise.all([
+        blobURL(`${base}/ffmpeg-core.js`, "text/javascript"),
+        blobURL(`${base}/ffmpeg-core.wasm`, "application/wasm"),
+      ]);
+    } catch (e) {
+      lastError = e;
+    }
+  }
+  throw lastError;
+};
 
 export function MediaPageClient() {
   const [mode, setMode] = useState<MediaMode>("compress");
@@ -55,10 +78,7 @@ export function MediaPageClient() {
       ffmpeg.on("progress", ({ progress: p }) => {
         setProgress(Math.min(100, Math.max(0, Math.round(p * 100))));
       });
-      const [coreURL, wasmURL] = await Promise.all([
-        toBlobURL(`${CORE_BASE}/ffmpeg-core.js`, "text/javascript"),
-        toBlobURL(`${CORE_BASE}/ffmpeg-core.wasm`, "application/wasm"),
-      ]);
+      const [coreURL, wasmURL] = await loadCore();
       await ffmpeg.load({ coreURL, wasmURL });
       ffmpegRef.current = ffmpeg;
       setEngineState("ready");
@@ -66,7 +86,7 @@ export function MediaPageClient() {
     } catch (e: any) {
       setEngineState("error");
       throw new Error(
-        `Failed to load FFmpeg engine from CDN. ${e?.message || "Check your internet connection and try again."}`
+        `Failed to load the FFmpeg engine. ${e?.message || "Check your internet connection and try again."}`
       );
     }
   };
