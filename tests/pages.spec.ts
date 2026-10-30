@@ -170,12 +170,21 @@ test.describe("API docs", () => {
     await page.goto("/api-docs");
     await expect(page.locator("pre")).toContainText("curl");
     await page.getByRole("button", { name: "NodeJS" }).click();
-    await expect(page.locator("pre")).toContainText("axios");
+    await expect(page.locator("pre")).toContainText("fetch(");
     await page.getByRole("button", { name: "python" }).click();
     await expect(page.locator("pre")).toContainText("requests");
     await page.locator("pre ~ button, .relative > button").first().click();
     const clip = await page.evaluate(() => navigator.clipboard.readText());
     expect(clip).toContain("requests");
+  });
+
+  test("endpoint picker shows the example for each real endpoint", async ({ page }) => {
+    await page.goto("/api-docs");
+    await page.getByLabel("Endpoint").selectOption("/api/v1/pdf/merge");
+    await expect(page.locator("pre")).toContainText("files=@second.pdf");
+    await page.getByLabel("Endpoint").selectOption("/api/v1/data/csv-to-json");
+    await expect(page.locator("pre")).toContainText("text/csv");
+    await expect(page.locator("pre")).toContainText("https://www.easytoconvert.in/api/v1/");
   });
 });
 
@@ -299,11 +308,19 @@ test.describe("Dashboard", () => {
   test("API key generate → reveal → regenerate", async ({ page }) => {
     await page.goto("/dashboard");
     await page.getByRole("button", { name: /Create API Developer Token/i }).click();
-    await expect(page.getByText(/^•+$/)).toBeVisible(); // masked
-    await page.locator("div.font-mono button").first().click(); // reveal (Eye)
-    await expect(page.getByText(/^ehp_/)).toBeVisible();
+    await expect(page.getByText(/^etc_/)).toBeVisible();
+    const first = await page.getByText(/^etc_/).textContent();
     await page.getByRole("button", { name: /Regenerate/i }).click();
-    await expect(page.getByText(/^ehp_/)).toBeVisible();
+    await expect(page.getByText(/^etc_/)).not.toHaveText(first!);
+    // The key survives a reload and is accepted by the real API
+    await page.reload();
+    await page.getByRole("button", { name: "Show API key" }).click();
+    const key = (await page.getByText(/^etc_/).textContent())!;
+    const res = await page.request.post("/api/v1/data/csv-to-json", {
+      headers: { Authorization: `Bearer ${key}` },
+      data: { csv_data: "a\n1" },
+    });
+    expect(res.status()).toBe(200);
   });
 
   test("clear history empties the table", async ({ page }) => {

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useConversions } from "@/app/providers";
 import Link from "next/link";
 import {
@@ -27,6 +27,13 @@ export default function Dashboard() {
   const [apiKey, setApiKey] = useState("");
   const [showKey, setShowKey] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [keyBusy, setKeyBusy] = useState(false);
+  const [keyError, setKeyError] = useState<string | null>(null);
+
+  // The key is kept in this browser only; storage can throw in private mode.
+  useEffect(() => {
+    try { setApiKey(localStorage.getItem("api_key") || ""); } catch {}
+  }, []);
 
   const countByCategory = (prefix: string) =>
     history.filter((h) => h.toolType.startsWith(prefix)).length;
@@ -38,9 +45,21 @@ export default function Dashboard() {
 
   const total = pdfCount + imageCount + dataCount + devCount || 1; // avoid /0
 
-  const generateApiKey = () => {
-    const key = "ehp_" + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-    setApiKey(key);
+  const generateApiKey = async () => {
+    setKeyBusy(true);
+    setKeyError(null);
+    try {
+      const res = await fetch("/api/v1/keys", { method: "POST" });
+      const body = await res.json().catch(() => null);
+      if (!res.ok || !body?.key) throw new Error(body?.error?.message || `Could not create a key (${res.status}).`);
+      setApiKey(body.key);
+      setShowKey(true);
+      try { localStorage.setItem("api_key", body.key); } catch {}
+    } catch (e) {
+      setKeyError(e instanceof TypeError ? "Couldn't reach the server. Check your connection and try again." : (e as Error).message);
+    } finally {
+      setKeyBusy(false);
+    }
   };
 
   const copyToClipboard = () => {
@@ -115,7 +134,9 @@ export default function Dashboard() {
               API Access Credentials
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Integrate Easytoconvert utility microservices directly into your scripts or pipelines.
+              Call the EasyToConvert REST API from your scripts and pipelines.{" "}
+              <Link href="/api-docs" className="text-indigo-500 hover:underline">Read the API docs</Link>.
+              Keys are shown only in this browser — copy yours somewhere safe.
             </p>
 
             <div className="space-y-3">
@@ -126,12 +147,14 @@ export default function Dashboard() {
                     <div className="flex items-center space-x-1.5">
                       <button
                         onClick={() => setShowKey(!showKey)}
+                        aria-label={showKey ? "Hide API key" : "Show API key"}
                         className="p-1 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
                       >
                         {showKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                       </button>
                       <button
                         onClick={copyToClipboard}
+                        aria-label="Copy API key"
                         className="p-1 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
                       >
                         {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
@@ -140,6 +163,7 @@ export default function Dashboard() {
                   </div>
                   <button
                     onClick={generateApiKey}
+                    disabled={keyBusy}
                     className="p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 text-xs hover:bg-slate-100 dark:hover:bg-slate-900 transition-all font-semibold"
                   >
                     Regenerate
@@ -148,12 +172,14 @@ export default function Dashboard() {
               ) : (
                 <button
                   onClick={generateApiKey}
+                  disabled={keyBusy}
                   className="w-full py-2.5 rounded-lg border border-indigo-500/30 hover:border-indigo-500 text-indigo-500 dark:text-indigo-400 hover:bg-indigo-500/5 transition-all text-xs font-semibold flex items-center justify-center space-x-2"
                 >
                   <Plus className="w-4 h-4" />
                   <span>Create API Developer Token</span>
                 </button>
               )}
+              {keyError && <p role="alert" className="text-xs text-red-600 dark:text-red-400">{keyError}</p>}
             </div>
           </div>
         </div>
