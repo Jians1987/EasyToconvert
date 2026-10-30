@@ -3,6 +3,8 @@
 import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useToolPage } from "./ToolPageContext";
+import { toolLinksForHub } from "@/app/lib/toolLinks";
 import { FileText, Image as ImageIcon, Database, Code, Sparkles, Video, Table2, HelpCircle, ArrowLeft } from "lucide-react";
 
 interface ToolLayoutProps {
@@ -13,12 +15,17 @@ interface ToolLayoutProps {
 }
 
 export default function ToolLayout({
-  title,
-  description,
+  title: hubTitle,
+  description: hubDescription,
   category,
   children,
 }: ToolLayoutProps) {
   const pathname = usePathname();
+  const toolPage = useToolPage();
+  const title = toolPage?.h1 ?? hubTitle;
+  const description = toolPage?.intro ?? hubDescription;
+  const crumb = toolPage?.name ?? hubTitle;
+  const hubTools = toolLinksForHub(category);
 
   const categories = [
     { id: "pdf", name: "PDF Tools", icon: FileText, path: "/pdf" },
@@ -40,7 +47,7 @@ export default function ToolLayout({
     itemListElement: [
       { "@type": "ListItem", position: 1, name: "Home", item: siteUrl },
       { "@type": "ListItem", position: 2, name: currentCat?.name ?? category, item: `${siteUrl}/${category}` },
-      { "@type": "ListItem", position: 3, name: title, item: `${siteUrl}${pathname}` },
+      { "@type": "ListItem", position: 3, name: crumb, item: `${siteUrl}${pathname}` },
     ],
   };
 
@@ -63,13 +70,14 @@ export default function ToolLayout({
           <span>/</span>
           <Link href={`/${category}`} className="hover:underline capitalize">{currentCat?.name ?? category}</Link>
           <span>/</span>
-          <span className="text-slate-800 dark:text-slate-200 truncate max-w-xs" aria-current="page">{title}</span>
+          <span className="text-slate-800 dark:text-slate-200 truncate max-w-xs" aria-current="page">{crumb}</span>
         </nav>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
         {/* Sidebar Nav */}
-        <aside className="lg:col-span-1 space-y-4 lg:sticky lg:top-20">
+        {/* On phones the tool comes first; the sidebar follows it. */}
+        <aside className="order-2 lg:order-1 lg:col-span-1 space-y-4 lg:sticky lg:top-20">
           <div className="p-4 rounded-xl border border-slate-200/60 dark:border-slate-800/80 bg-white/60 dark:bg-slate-900/40 backdrop-blur-md">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3 px-2">
               Categories
@@ -77,7 +85,7 @@ export default function ToolLayout({
             <nav className="space-y-1">
               {categories.map((cat) => {
                 const Icon = cat.icon;
-                const isActive = pathname.startsWith(cat.path);
+                const isActive = cat.id === category;
                 return (
                   <Link
                     key={cat.id}
@@ -96,6 +104,30 @@ export default function ToolLayout({
             </nav>
           </div>
 
+          {hubTools.length > 0 && (
+            <div className="p-4 rounded-xl border border-slate-200/60 dark:border-slate-800/80 bg-white/60 dark:bg-slate-900/40 backdrop-blur-md">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3 px-2">
+                {currentCat?.name ?? "Tools"}
+              </h3>
+              <nav aria-label={`${currentCat?.name ?? "Category"} tools`} className="space-y-0.5">
+                {hubTools.map((tool) => (
+                  <Link
+                    key={tool.slug}
+                    href={`/${tool.slug}`}
+                    aria-current={pathname === `/${tool.slug}` ? "page" : undefined}
+                    className={`block px-3 py-1.5 rounded-lg text-xs transition-all ${
+                      pathname === `/${tool.slug}`
+                        ? "font-semibold text-indigo-600 dark:text-indigo-300 bg-indigo-500/10"
+                        : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-900"
+                    }`}
+                  >
+                    {tool.name}
+                  </Link>
+                ))}
+              </nav>
+            </div>
+          )}
+
           <div className="p-4 rounded-xl border border-slate-200/50 dark:border-slate-800/50 bg-slate-100/30 dark:bg-slate-900/10 text-xs text-slate-500 dark:text-slate-400 flex items-start space-x-2">
             <HelpCircle className="w-4 h-4 text-indigo-400 flex-shrink-0 mt-0.5" />
             <div className="space-y-1">
@@ -108,7 +140,7 @@ export default function ToolLayout({
         </aside>
 
         {/* Main Content Area */}
-        <div className="lg:col-span-3 space-y-6">
+        <div className="order-1 lg:order-2 lg:col-span-3 space-y-6">
           <div className="space-y-2">
             <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-600 dark:from-white dark:via-slate-200 dark:to-indigo-400">
               {title}

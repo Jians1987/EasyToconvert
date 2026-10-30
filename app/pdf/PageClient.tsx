@@ -5,12 +5,9 @@ import { useToolMode } from "@/app/lib/toolLaunch";
 import ToolLayout from "@/components/ToolLayout";
 import Dropzone from "@/components/Dropzone";
 import { useConversions } from "@/app/providers";
-import { ocrImage, ocrImageWithNemotron } from "@/app/lib/ocr";
-import { convertPdfToDocx, type DocxProgress } from "@/app/lib/pdfToDocx";
-import { convertPdfToXlsx, type XlsxProgress, type TableEngine } from "@/app/lib/pdfToXlsx";
-import { extractTables, type PdfTextItem } from "@/app/lib/tableExtractor";
-import { PDFDocument, degrees, rgb, StandardFonts } from "pdf-lib-plus-encrypt";
-import { Document, Packer, Paragraph, TextRun, HeadingLevel, BorderStyle, ImageRun } from "docx";
+// Heavy engines (pdf-lib, docx, exceljs, OCR) are imported on demand inside the
+// handlers so the page itself loads quickly.
+import type { PdfTextItem } from "@/app/lib/tableExtractor";
 import { 
   FileText, Star, AlertTriangle, Download, Image as ImageIcon, Type, FileSpreadsheet, Sparkles,
   Trash2, RotateCw, ArrowUp, ArrowDown, Plus, Square, Circle as CircleIcon, PenTool, Edit3,
@@ -43,7 +40,18 @@ const extractTableWithNemotron = async (pngBase64: string): Promise<string[][]> 
   return grid;
 };
 
-type PdfMode = "merge" | "split" | "rotate" | "to-doc" | "to-excel" | "to-image" | "edit";
+type PdfMode = "merge" | "split" | "compress" | "rotate" | "to-doc" | "to-excel" | "to-image" | "edit";
+type CompressLevel = "strong" | "balanced" | "light";
+
+// Render scale (1 = 72 dpi) and JPEG quality per compression level.
+const COMPRESS_SETTINGS: Record<CompressLevel, { scale: number; quality: number; label: string }> = {
+  strong: { scale: 1.1, quality: 0.45, label: "Strong – smallest file" },
+  balanced: { scale: 1.5, quality: 0.6, label: "Balanced – recommended" },
+  light: { scale: 2, quality: 0.75, label: "Light – best quality" },
+};
+
+const formatBytes = (bytes: number) => (bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(2)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`);
+const baseName = (file?: File) => file?.name.replace(/\.[^.]+$/, "") || "document";
 
 interface TextItem {
   str: string;
@@ -196,13 +204,15 @@ const getAnnBounds = (ann: Annotation) => {
 
 export function PdfPageClient() {
   const [mode, setMode] = useState<PdfMode>("merge");
-  useToolMode<PdfMode>(setMode, ["merge","split","rotate","to-doc","to-excel","to-image","edit"]);
+  useToolMode<PdfMode>(setMode, ["merge","split","compress","rotate","to-doc","to-excel","to-image","edit"]);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [processing, setProcessing] = useState(false);
   const [pdfPassword, setPdfPassword] = useState("");
   const [inputPassword, setInputPassword] = useState("");
   const [isEncrypted, setIsEncrypted] = useState(false);
   const [rotateAngle, setRotateAngle] = useState(90);
+  const [compressLevel, setCompressLevel] = useState<CompressLevel>("balanced");
+  const [compressResult, setCompressResult] = useState<{ original: number; output: number; kept: boolean } | null>(null);
   const [splitPages, setSplitPages] = useState("1");
   const [totalPages, setTotalPages] = useState(0);
   const [docFidelity, setDocFidelity] = useState<"layout" | "text">("layout");
@@ -266,6 +276,7 @@ export function PdfPageClient() {
   const handleFilesSelected = async (files: File[]) => {
     setSelectedFiles(files);
     setDownloadUrl(null);
+    setCompressResult(null);
     setImagePages([]);
     setIsEncrypted(false);
     setPdfPassword("");
@@ -321,6 +332,7 @@ export function PdfPageClient() {
     switch (mode) {
       case "merge": return "Merge";
       case "split": return "Split";
+      case "compress": return "Compress";
       case "rotate": return "Rotate";
       case "to-doc": return "to Word";
       case "to-excel": return "to Excel";
@@ -332,11 +344,12 @@ export function PdfPageClient() {
   const modeDescriptions: Record<PdfMode, string> = {
     merge: "Combine multiple PDF files into one document. Set an optional password to encrypt the output.",
     split: "Extract specific pages into a separate PDF file.",
-    rotate: "Rotate all pages or a specific set of pages by 90°, 180°, or 270°.",
+    compress: "Reduce PDF file size by re-rendering pages as compressed images. Best for scans and image-heavy PDFs; text in the result is not selectable.",
+    rotate: "Rotate every page of a PDF by 90°, 180°, or 270°.",
     "to-doc": "Convert a PDF into a Word Document (.docx). Layout fidelity mode preserves structure. Cloud AI OCR handles scanned pages.",
     "to-excel": "Extract tables from a PDF into an Excel Spreadsheet (.xlsx). Uses Microsoft Table Transformer (on-device) or Nemotron Cloud AI.",
     "to-image": "Render each page of a PDF as a high-quality JPG image you can save individually.",
-    edit: "Draw, annotate, add text, stamps, signatures, images, and shapes directly on PDF pages. Reorder, rotate, delete, and export.",
+    edit: "Click anywhere on a page to add text in the colour and size you choose, then export a new PDF.",
   };
 
   // Check if any uploaded PDFs are encrypted
@@ -350,6 +363,7 @@ export function PdfPageClient() {
         if (file.type !== "application/pdf" && !file.name.endsWith(".pdf")) continue;
         try {
           const arrayBuffer = await file.arrayBuffer();
+          const { PDFDocument } = await import("pdf-lib-plus-encrypt");
           const pdf = await PDFDocument.load(new Uint8Array(arrayBuffer), { 
             ignoreEncryption: true,
             updateMetadata: false 
@@ -591,7 +605,6 @@ export function PdfPageClient() {
 
     try {
       const { PDFDocument: PdfLibDocument, degrees, rgb, StandardFonts } = await import("pdf-lib-plus-encrypt");
-      const { Document, Packer, Paragraph, TextRun, HeadingLevel, ImageRun } = await import("docx");
 
       // Handle encrypted PDFs
       const loadWithPassword = async (file: File) => {
@@ -685,12 +698,53 @@ export function PdfPageClient() {
           downloadUrl: url,
         });
 
+      } else if (mode === "compress") {
+        const file = selectedFiles[0];
+        const { scale, quality } = COMPRESS_SETTINGS[compressLevel];
+        const pdfjsLib = await loadPdfJs();
+        const source = await pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()), password: inputPassword || undefined }).promise;
+        const output = await PdfLibDocument.create();
+        for (let i = 1; i <= source.numPages; i++) {
+          const page = await source.getPage(i);
+          const size = page.getViewport({ scale: 1 });
+          const viewport = page.getViewport({ scale });
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.ceil(viewport.width);
+          canvas.height = Math.ceil(viewport.height);
+          const ctx = canvas.getContext("2d");
+          if (!ctx) throw new Error("Canvas rendering is unavailable.");
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          await page.render({ canvasContext: ctx, viewport }).promise;
+          const jpeg = await new Promise<Blob>((resolve, reject) =>
+            canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Could not encode page " + i))), "image/jpeg", quality));
+          const image = await output.embedJpg(new Uint8Array(await jpeg.arrayBuffer()));
+          output.addPage([size.width, size.height]).drawImage(image, { x: 0, y: 0, width: size.width, height: size.height });
+          canvas.width = canvas.height = 0; // release canvas memory between pages
+        }
+        const bytes = await output.save({ useObjectStreams: true });
+        // If compression doesn't help (e.g. text-only PDFs), give back the original instead of a bigger file.
+        const kept = bytes.length >= file.size;
+        const blob = kept ? file : new Blob([bytes.buffer as ArrayBuffer], { type: "application/pdf" });
+        const url = URL.createObjectURL(blob);
+        setDownloadUrl(url);
+        setCompressResult({ original: file.size, output: blob.size, kept });
+
+        addHistoryItem({
+          fileName: `${baseName(file)}-compressed.pdf`,
+          fileSize: blob.size,
+          toolType: "pdf-compress",
+          status: "success",
+          downloadUrl: url,
+        });
+
       } else if (mode === "rotate") {
         const file = selectedFiles[0];
         const pdf = await loadWithPassword(file);
         const pages = pdf.getPages();
+        // Add to each page's existing rotation so already-rotated pages turn correctly.
         pages.forEach(page => {
-          page.setRotation(degrees(rotateAngle));
+          page.setRotation(degrees((page.getRotation().angle + rotateAngle) % 360));
         });
 
         const pdfBytes = await pdf.save();
@@ -708,6 +762,7 @@ export function PdfPageClient() {
 
       } else if (mode === "to-doc") {
         const file = selectedFiles[0];
+        const { convertPdfToDocx } = await import("@/app/lib/pdfToDocx");
         const blob = await convertPdfToDocx(
           file,
           docFidelity,
@@ -730,6 +785,7 @@ export function PdfPageClient() {
 
       } else if (mode === "to-excel") {
         const file = selectedFiles[0];
+        const { convertPdfToXlsx } = await import("@/app/lib/pdfToXlsx");
         const { blob, sheetCount, totalTables } = await convertPdfToXlsx(
           file,
           tableEngine,
@@ -912,6 +968,7 @@ export function PdfPageClient() {
             {[
               { id: "merge", label: "Merge" },
               { id: "split", label: "Split" },
+              { id: "compress", label: "Compress" },
               { id: "rotate", label: "Rotate" },
               { id: "to-doc", label: "→ Word" },
               { id: "to-excel", label: "→ Excel" },
@@ -923,6 +980,7 @@ export function PdfPageClient() {
                 onClick={() => {
                   setMode(t.id as PdfMode);
                   setDownloadUrl(null);
+                  setCompressResult(null);
                   setImagePages([]);
                   setAnnotations([]);
                   setPageLayout([]);
@@ -1020,6 +1078,31 @@ export function PdfPageClient() {
                 {totalPages > 0 && (
                   <p className="text-[10px] text-slate-400">Total pages: {totalPages}</p>
                 )}
+              </div>
+            )}
+
+            {mode === "compress" && (
+              <div className="space-y-2">
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Compression Level</span>
+                <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Compression level">
+                  {(Object.keys(COMPRESS_SETTINGS) as CompressLevel[]).map((level) => (
+                    <button
+                      key={level}
+                      type="button"
+                      role="radio"
+                      aria-checked={compressLevel === level}
+                      onClick={() => setCompressLevel(level)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${
+                        compressLevel === level ? "bg-indigo-600 text-white" : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200"
+                      }`}
+                    >
+                      {COMPRESS_SETTINGS[level].label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                  Pages are converted to compressed images, so text in the result can&apos;t be selected or searched. Keep your original if you need that.
+                </p>
               </div>
             )}
 
@@ -1138,7 +1221,14 @@ export function PdfPageClient() {
                   <button type="button" onClick={() => setToolMode("text")} className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${toolMode === "text" ? "bg-indigo-600 text-white" : "bg-slate-100 dark:bg-slate-800"}`}>Text</button>
                   <input type="text" placeholder="Text value..." value={editText} onChange={(event) => setEditText(event.target.value)} className="glass-input min-w-48 flex-1 text-xs" />
                   <input type="color" aria-label="Annotation color" value={editColor} onChange={(event) => setEditColor(event.target.value)} />
+                  <label className="flex items-center gap-1.5 text-xs text-slate-500">
+                    Size
+                    <input type="number" min={6} max={96} aria-label="Text size" value={editSize} onChange={(event) => setEditSize(Math.min(96, Math.max(6, Number(event.target.value) || 18)))} className="glass-input w-16 text-xs" />
+                  </label>
+                  <button type="button" disabled={!annotations.length} onClick={() => setAnnotations((previous) => previous.slice(0, -1))} className="rounded-lg px-3 py-1.5 text-xs font-semibold bg-slate-100 dark:bg-slate-800 disabled:opacity-40">Undo</button>
+                  <button type="button" disabled={!annotations.length} onClick={() => setAnnotations([])} className="rounded-lg px-3 py-1.5 text-xs font-semibold bg-slate-100 dark:bg-slate-800 disabled:opacity-40">Clear</button>
                 </div>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400">Choose Text, type your text, then click on a page to place it.</p>
                 <div className="space-y-5">
                   {imagePages.map((image) => (
                     <div key={image.page} className="relative mx-auto max-w-3xl overflow-hidden rounded-lg border border-slate-200 dark:border-slate-800">
@@ -1151,6 +1241,22 @@ export function PdfPageClient() {
                     </div>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {mode === "to-image" && imagePages.length > 0 && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {imagePages.map((image) => (
+                  <figure key={image.page} className="rounded-lg border border-slate-200 dark:border-slate-800 overflow-hidden bg-white dark:bg-slate-950">
+                    <img src={image.url} alt={`Page ${image.page} preview`} className="block w-full h-auto" />
+                    <figcaption className="flex items-center justify-between px-2 py-1.5 text-[10px] text-slate-500">
+                      <span>Page {image.page}</span>
+                      <a href={image.url} download={`${baseName(selectedFiles[0])}-page-${image.page}.jpg`} className="font-semibold text-indigo-600 dark:text-indigo-400 hover:underline">
+                        Download JPG
+                      </a>
+                    </figcaption>
+                  </figure>
+                ))}
               </div>
             )}
 
@@ -1183,7 +1289,11 @@ export function PdfPageClient() {
                 <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">Success! File Ready</span>
                 <span className="text-[10px] text-slate-400">
                   {mode === "to-image" && imagePages.length > 1
-                    ? `${imagePages.length} pages rendered. Click Download to save page 1.`
+                    ? `${imagePages.length} pages rendered. Download each page from the previews above.`
+                    : mode === "compress" && compressResult
+                    ? compressResult.kept
+                      ? `This PDF is already compact (${formatBytes(compressResult.original)}), so your original was kept.`
+                      : `${formatBytes(compressResult.original)} → ${formatBytes(compressResult.output)} (−${Math.round((1 - compressResult.output / compressResult.original) * 100)}%)`
                     : "Your processed file is ready for download."}
                 </span>
               </div>
@@ -1192,16 +1302,14 @@ export function PdfPageClient() {
               href={downloadUrl}
               download={
                 mode === "merge"
-                  ? `merged_${Date.now()}.pdf`
+                  ? "merged.pdf"
                   : mode === "to-doc"
-                  ? `${selectedFiles[0]?.name.split(".")[0] || "document"}.docx`
+                  ? `${baseName(selectedFiles[0])}.docx`
                   : mode === "to-excel"
-                  ? `${selectedFiles[0]?.name.split(".")[0] || "tables"}.xlsx`
+                  ? `${baseName(selectedFiles[0])}.xlsx`
                   : mode === "to-image"
-                  ? `${selectedFiles[0]?.name.split(".")[0] || "preview"}_page1.jpg`
-                  : mode === "edit"
-                  ? `edited_${selectedFiles[0]?.name || "document.pdf"}`
-                  : `${mode}_pdf_${Date.now()}.pdf`
+                  ? `${baseName(selectedFiles[0])}-page-1.jpg`
+                  : `${baseName(selectedFiles[0])}-${mode === "edit" ? "edited" : mode === "compress" ? "compressed" : mode === "split" ? "pages" : "rotated"}.pdf`
               }
               className="px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-500 hover:bg-emerald-600 text-white transition-all shadow-sm"
             >

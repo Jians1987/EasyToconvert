@@ -2,12 +2,12 @@ import type { Metadata } from "next";
 import { BlogPageClient } from "./PageClient";
 
 export const metadata: Metadata = {
-  title: "Blog – Tips, Guides & News | EasyToConvert",
+  title: "Guides – PDF, Image & Data How-Tos",
   description:
     "Read articles, tips, and guides about PDF tools, image conversion, developer utilities, and productivity on EasyToConvert.",
   alternates: { canonical: "https://www.easytoconvert.in/blog" },
   openGraph: {
-    title: "Blog – Tips, Guides & News | EasyToConvert",
+    title: "Guides – PDF, Image & Data How-Tos | EasyToConvert",
     description:
       "Read articles, tips, and guides about PDF tools, image conversion, developer utilities, and productivity on EasyToConvert.",
     url: "https://www.easytoconvert.in/blog",

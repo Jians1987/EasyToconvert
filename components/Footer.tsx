@@ -25,7 +25,7 @@ export default function Footer() {
             <div className="flex space-x-4 pt-2">
               <div className="flex items-center space-x-1.5 text-xs text-slate-400">
                 <Globe className="w-3.5 h-3.5 text-indigo-400" />
-                <span>Multi-language</span>
+                <span>No sign-up</span>
               </div>
               <div className="flex items-center space-x-1.5 text-xs text-slate-400">
                 <Shield className="w-3.5 h-3.5 text-emerald-400" />
@@ -43,60 +43,60 @@ export default function Footer() {
             <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-200 mb-4">Core Converters</h4>
             <ul className="space-y-2 text-xs">
               <li>
-                <Link href="/pdf" className="text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-all">
-                  Merge & Split PDF
+                <Link href="/merge-pdf" className="text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-all">
+                  Merge PDF
                 </Link>
               </li>
               <li>
-                <Link href="/pdf" className="text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-all">
-                  Rotate PDF
+                <Link href="/compress-pdf" className="text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-all">
+                  Compress PDF
                 </Link>
               </li>
               <li>
-                <Link href="/image" className="text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-all">
-                  PNG to JPG & WebP
+                <Link href="/png-to-jpg" className="text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-all">
+                  PNG to JPG
                 </Link>
               </li>
               <li>
-                <Link href="/image" className="text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-all">
-                  Image Compressor
+                <Link href="/compress-image" className="text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-all">
+                  Compress Image
                 </Link>
               </li>
               <li>
-                <Link href="/image" className="text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-all">
-                  Image Metadata Viewer
+                <Link href="/pdf-to-word" className="text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-all">
+                  PDF to Word
                 </Link>
               </li>
             </ul>
           </div>
 
-          {/* Column 2: Data & Code */}
+          {/* Column 2: Data, OCR & Media */}
           <div>
-            <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-200 mb-4">Developer Tools</h4>
+            <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-200 mb-4">Data, OCR &amp; Media</h4>
             <ul className="space-y-2 text-xs">
               <li>
-                <Link href="/data" className="text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-all">
+                <Link href="/json-formatter" className="text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-all">
                   JSON Formatter
                 </Link>
               </li>
               <li>
-                <Link href="/data" className="text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-all">
-                  CSV to JSON / XML
+                <Link href="/csv-to-json" className="text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-all">
+                  CSV to JSON
                 </Link>
               </li>
               <li>
-                <Link href="/developer" className="text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-all">
-                  Base64 Encode & Decode
+                <Link href="/image-to-text" className="text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-all">
+                  Image to Text (OCR)
                 </Link>
               </li>
               <li>
-                <Link href="/developer" className="text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-all">
+                <Link href="/qr-code-generator" className="text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-all">
                   QR Code Generator
                 </Link>
               </li>
               <li>
-                <Link href="/javascript" className="text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-all">
-                  JS & CSS Minifier
+                <Link href="/video-to-mp3" className="text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-all">
+                  Video to MP3
                 </Link>
               </li>
             </ul>
@@ -106,7 +106,7 @@ export default function Footer() {
             <ul className="space-y-2 text-xs">
               <li><Link href="/about" className="text-slate-500 dark:text-slate-400 hover:text-primary transition-all">About Us</Link></li>
               <li><Link href="/api-docs" className="text-slate-500 dark:text-slate-400 hover:text-primary transition-all">API Documentation</Link></li>
-              <li><Link href="/blog" className="text-slate-500 dark:text-slate-400 hover:text-primary transition-all">Blog</Link></li>
+              <li><Link href="/blog" className="text-slate-500 dark:text-slate-400 hover:text-primary transition-all">Guides</Link></li>
               <li><Link href="/contact" className="text-slate-500 dark:text-slate-400 hover:text-primary transition-all">Contact</Link></li>
             </ul>
           </div>

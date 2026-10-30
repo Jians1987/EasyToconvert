@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { DeveloperPageClient } from "./PageClient";
 
 export const metadata: Metadata = {
-  title: "Free Developer Tools – QR Generator, Hash, Base64, UUID | EasyToConvert",
+  title: "Free Developer Tools – QR Code, Password, Base64, UUID",
   description:
     "Free developer utilities: QR code generator, MD5/SHA256 hash generator, Base64 encoder/decoder, UUID generator, color picker, and more.",
   keywords: [
@@ -15,7 +15,7 @@ export const metadata: Metadata = {
   ],
   alternates: { canonical: "https://www.easytoconvert.in/developer" },
   openGraph: {
-    title: "Free Developer Tools – QR Generator, Hash, Base64, UUID | EasyToConvert",
+    title: "Free Developer Tools – QR Code, Password, Base64, UUID | EasyToConvert",
     description:
       "Free developer utilities: QR code generator, MD5/SHA256 hash generator, Base64 encoder/decoder, UUID generator, color picker, and more.",
     url: "https://www.easytoconvert.in/developer",

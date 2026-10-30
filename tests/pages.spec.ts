@@ -90,18 +90,19 @@ test.describe("Footer", () => {
     await expect(page).toHaveURL(/\/about$/);
     await page.getByRole("link", { name: "API Documentation" }).click();
     await expect(page).toHaveURL(/\/api-docs$/);
-    await page.getByRole("link", { name: "Blog" }).click();
+    await page.getByRole("link", { name: "Guides", exact: true }).click();
     await expect(page).toHaveURL(/\/blog$/);
   });
 });
 
 // ───────────── Home ─────────────
 test.describe("Home", () => {
-  test("tool chips now navigate to their hub (dead-control fix)", async ({ page }) => {
+  test("tool chips navigate to their dedicated tool page", async ({ page }) => {
     await page.goto("/");
     // the category chip appears before the footer link of the same name
     await page.getByRole("link", { name: "JSON Formatter", exact: true }).first().click();
-    await expect(page).toHaveURL(/\/data$/);
+    await expect(page).toHaveURL(/\/json-formatter$/);
+    await expect(page.getByRole("heading", { level: 1, name: /Format, validate and minify JSON/ })).toBeVisible();
   });
 
   test("Launch buttons + CTA links work", async ({ page }) => {
@@ -130,8 +131,8 @@ test.describe("Home", () => {
       await expect(page.getByText(gone, { exact: true })).toHaveCount(0);
     }
     // shipped replacements are present and clickable
-    for (const shipped of ["URL Encoder", "Password Maker", "Document Translator", "JSON Minifier", "Box Shadow"]) {
-      await expect(page.getByRole("link", { name: shipped, exact: true })).toBeVisible();
+    for (const shipped of ["URL Encoder / Decoder", "Password Generator", "Image to Text (OCR)", "Compress PDF", "Box Shadow Generator"]) {
+      await expect(page.getByRole("link", { name: shipped, exact: true }).first()).toBeVisible();
     }
   });
 
@@ -139,7 +140,7 @@ test.describe("Home", () => {
     await page.goto("/");
     const card = page.locator("div").filter({ hasText: /^Video & Audio/ }).first();
     await expect(card.getByText("Soon", { exact: true })).toHaveCount(0);
-    await expect(page.getByRole("link", { name: "Extract Audio", exact: true }).first()).toBeVisible();
+    await expect(page.getByRole("link", { name: "Video to MP3", exact: true }).first()).toBeVisible();
   });
 });
 
@@ -157,10 +158,15 @@ test.describe("Contact", () => {
 
 // ───────────── Blog ─────────────
 test.describe("Blog", () => {
-  test("Read Article navigates (dead-control fix)", async ({ page }) => {
+  test("Read Article opens the full article", async ({ page }) => {
     await page.goto("/blog");
-    await page.getByRole("link", { name: /Read Article/i }).first().click();
-    await expect(page).toHaveURL(/\/image$/);
+    // Each "Read Article" link is labelled with its article title for screen readers
+    await page.getByRole("link", { name: /^Read: / }).first().click();
+    await expect(page).toHaveURL(/\/blog\/reduce-photo-size-for-online-forms$/);
+    await expect(page.getByRole("heading", { level: 1, name: /Reduce Photo and Signature Size/ })).toBeVisible();
+    // Each article links to the tools it recommends
+    await page.getByRole("link", { name: /Resize Image/ }).click();
+    await expect(page).toHaveURL(/\/resize-image$/);
   });
 });
 

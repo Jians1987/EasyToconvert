@@ -26,13 +26,13 @@ test("palette supports shortcuts, fuzzy search, navigation, focus restoration an
   await search.fill("uuid");
   await page.keyboard.press("ArrowUp");
   await page.keyboard.press("Enter");
-  await expect(page).toHaveURL(/\/developer#uuid$/);
+  await expect(page).toHaveURL(/\/uuid-generator$/);
   await expect(page.getByRole("button", { name: /Generate 5 UUIDs/ })).toBeVisible();
-  // Selecting a second tool in the same route must change its mode as well.
+  // Selecting another tool from a tool page navigates to that tool's page.
   await page.keyboard.press("Control+k");
   await search.fill("password");
   await page.keyboard.press("Enter");
-  await expect(page).toHaveURL(/\/developer#password$/);
+  await expect(page).toHaveURL(/\/password-generator$/);
   await expect(page.getByRole("button", { name: /Generate Password/ })).toBeVisible();
 });
 
@@ -60,7 +60,7 @@ test("dropping JSON keeps the file in memory and opens the formatter", async ({ 
   await expect(page.getByRole("button", { name: "Format & Beautify" })).toBeDisabled();
   await zone.dispatchEvent("drop", { dataTransfer: transfer });
   await page.getByRole("button", { name: "Format & Beautify" }).click();
-  await expect(page).toHaveURL(/\/data#json-format$/);
+  await expect(page).toHaveURL(/\/json-formatter$/);
   await expect(page.locator("textarea").first()).toHaveValue('{"answer":42}');
   await page.getByRole("button", { name: "Beautify JSON" }).click();
   await expect(page.locator("textarea").last()).toHaveValue('{\n  "answer": 42\n}');
@@ -72,7 +72,7 @@ test("image handoff selects the intended mode and mobile palette fits", async ({
   await page.screenshot({ path: "test-results/home-mobile.png", fullPage: false });
   await page.getByLabel("Choose a file to convert").setInputFiles({ name: "pixel.png", mimeType: "image/png", buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=", "base64") });
   await page.getByRole("button", { name: "Resize", exact: true }).click();
-  await expect(page).toHaveURL(/\/image#resize$/);
+  await expect(page).toHaveURL(/\/resize-image$/);
   await expect(page.getByText("pixel.png", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Search tools", exact: true }).click();
   await expect(page.getByRole("combobox")).toBeFocused();

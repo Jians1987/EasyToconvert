@@ -80,7 +80,7 @@ test.describe("Edge: navbar quick search", () => {
     const box = page.getByRole("dialog").getByRole("combobox");
     await box.fill("Merge");
     await box.press("Enter");
-    await expect(page).toHaveURL(/\/pdf#merge$/);
+    await expect(page).toHaveURL(/\/merge-pdf$/);
   });
 });
 

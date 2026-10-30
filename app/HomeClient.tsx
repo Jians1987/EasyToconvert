@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import Link from "next/link";
 import ConversionHero from "@/components/ConversionHero";
+import { toolLinksForHub } from "@/app/lib/toolLinks";
 import {
   FileText,
   Image as ImageIcon,
@@ -28,8 +29,8 @@ export function HomeClient() {
       title: "PDF Utilities",
       icon: FileText,
       color: "from-red-500/20 to-orange-500/20 text-red-500 border-red-500/30",
-      description: "Merge, split, rotate, edit, and convert PDF files to Word, Excel, or JPG images directly in your browser.",
-      tools: ["Merge PDF", "Split PDF", "PDF to Word", "PDF to Excel", "PDF Editor", "Protect PDF"],
+      description: "Merge, split, compress, rotate, add text to, and convert PDF files to Word, Excel, or JPG images directly in your browser.",
+      tools: ["Merge PDF", "Split PDF", "Compress PDF", "PDF to Word", "PDF to Excel", "Add Text to PDF", "Protect PDF"],
       path: "/pdf",
     },
     {
@@ -97,11 +98,17 @@ export function HomeClient() {
     },
   ];
 
+  // Each tool chip links to that tool's own page where one exists, otherwise to the category hub.
+  const chipsFor = (cat: (typeof categories)[number]) => {
+    const pages = toolLinksForHub(cat.id);
+    return pages.length ? pages.map((t) => ({ label: t.name, href: `/${t.slug}` })) : cat.tools.map((label) => ({ label, href: cat.path }));
+  };
+
   const filteredCategories = searchQuery
     ? categories.filter(
         (cat) =>
           cat.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          cat.tools.some((t) => t.toLowerCase().includes(searchQuery.toLowerCase()))
+          [...cat.tools, ...chipsFor(cat).map((c) => c.label)].some((t) => t.toLowerCase().includes(searchQuery.toLowerCase()))
       )
     : categories;
 
@@ -188,13 +195,13 @@ export function HomeClient() {
                   </p>
 
                   <div className="flex flex-wrap gap-1.5 pt-2">
-                    {cat.tools.map((tool) => (
+                    {chipsFor(cat).map((tool) => (
                       <Link
-                        key={tool}
-                        href={cat.path}
+                        key={tool.href + tool.label}
+                        href={tool.href}
                         className="text-[10px] bg-slate-100 hover:bg-slate-200 dark:bg-slate-800/80 dark:hover:bg-slate-800 border border-slate-200/50 dark:border-slate-700/50 rounded-full px-2.5 py-0.5 text-slate-600 dark:text-slate-300 font-medium transition-colors cursor-pointer"
                       >
-                        {tool}
+                        {tool.label}
                       </Link>
                     ))}
                   </div>

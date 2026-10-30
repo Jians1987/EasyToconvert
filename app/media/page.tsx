@@ -2,22 +2,22 @@ import type { Metadata } from "next";
 import { MediaPageClient } from "./PageClient";
 
 export const metadata: Metadata = {
-  title: "Free Online Video & Audio Converter – Compress MP4, MP3 | EasyToConvert",
+  title: "Free Audio Tools – Compress Audio, Video to MP3, Trim MP3",
   description:
-    "Compress and convert video and audio files online for free using FFmpeg WebAssembly. No uploads — everything runs in your browser.",
+    "Compress audio, extract MP3 audio from videos, and trim audio clips for free with FFmpeg WebAssembly. No uploads — everything runs in your browser.",
   keywords: [
-    "video compressor",
+    "video to MP3",
     "audio converter",
-    "compress MP4",
+    "trim audio",
     "compress MP3",
     "FFmpeg online",
     "media tools",
   ],
   alternates: { canonical: "https://www.easytoconvert.in/media" },
   openGraph: {
-    title: "Free Online Video & Audio Converter – Compress MP4, MP3 | EasyToConvert",
+    title: "Free Audio Tools – Compress Audio, Video to MP3, Trim MP3",
     description:
-      "Compress and convert video and audio files online for free using FFmpeg WebAssembly. No uploads — everything runs in your browser.",
+      "Compress audio, extract MP3 audio from videos, and trim audio clips for free with FFmpeg WebAssembly. No uploads — everything runs in your browser.",
     url: "https://www.easytoconvert.in/media",
     images: [{ url: "/og-image.png", width: 1200, height: 630, alt: "EasyToConvert" }],
   },

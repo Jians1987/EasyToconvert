@@ -143,7 +143,7 @@ export function DeveloperPageClient() {
   return (
     <ToolLayout
       title="Developer Utilities Core"
-      description="Encode Base64 parameters, package clean URLs, draft UUID sequences, inspect security hashes, and build QR Codes locally."
+      description="Encode Base64 parameters, package clean URLs, generate UUIDs and strong passwords, and build QR codes locally."
       category="developer"
     >
       <div className="space-y-6">
