@@ -120,6 +120,12 @@ test.describe("Technical SEO", () => {
     expect(manifest.icons.map((i: { sizes: string }) => i.sizes)).toContain("512x512");
   });
 
+  test("Google Search Console verification file is served unchanged", async ({ request }) => {
+    const res = await request.get("/google03ee45c3264fc91e.html");
+    expect(res.status()).toBe(200);
+    expect(await res.text()).toBe("google-site-verification: google03ee45c3264fc91e.html");
+  });
+
   test("blog articles have Article structured data", async ({ request }) => {
     const html = await (await request.get(`/blog/${blogPosts[0].slug}`)).text();
     expect(html).toContain('"@type":"Article"');
