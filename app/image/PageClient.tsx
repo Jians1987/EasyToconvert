@@ -11,7 +11,12 @@ type ImageMode = "convert" | "compress" | "resize" | "metadata";
 
 export function ImagePageClient() {
   const [mode, setMode] = useState<ImageMode>("convert");
-  useToolMode<ImageMode>(setMode, ["convert","compress","resize","metadata"], (hash) => { if (hash === "svg-png") { setMode("convert"); setTargetFormat("image/png"); return true; } if (hash === "convert") setTargetFormat("image/webp"); return false; });
+  useToolMode<ImageMode>(setMode, ["convert","compress","resize","metadata"], (hash) => {
+    const formats: Record<string, string> = { "svg-png": "image/png", "to-png": "image/png", "to-jpg": "image/jpeg" };
+    if (formats[hash]) { setMode("convert"); setTargetFormat(formats[hash]); return true; }
+    if (hash === "convert") setTargetFormat("image/webp");
+    return false;
+  });
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [processing, setProcessing] = useState(false);
   const [targetFormat, setTargetFormat] = useState("image/webp");
@@ -22,6 +27,7 @@ export function ImagePageClient() {
   const [originalDimensions, setOriginalDimensions] = useState<{ w: number; h: number } | null>(null);
   const [metadata, setMetadata] = useState<{ [key: string]: string } | null>(null);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+  const [result, setResult] = useState<{ name: string; original: number; output: number; note?: string } | null>(null);
   const { addHistoryItem, favorites, toggleFavorite } = useConversions();
 
   // Track object URL for cleanup to prevent memory leaks
@@ -30,6 +36,7 @@ export function ImagePageClient() {
   const handleFilesSelected = (files: File[]) => {
     setSelectedFiles(files);
     setDownloadUrl(null);
+    setResult(null);
     setMetadata(null);
 
     // Cleanup previous object URL
@@ -95,6 +102,7 @@ export function ImagePageClient() {
     if (selectedFiles.length === 0) return;
     setProcessing(true);
     setDownloadUrl(null);
+    setResult(null);
 
     const file = selectedFiles[0];
 
@@ -127,22 +135,38 @@ export function ImagePageClient() {
         canvas.height = h;
 
         if (ctx) {
+          const mime = outputMime(file);
+          // JPEG has no alpha channel: paint white first so transparent areas don't turn black.
+          if (mime === "image/jpeg") {
+            ctx.fillStyle = "#ffffff";
+            ctx.fillRect(0, 0, w, h);
+          }
           ctx.drawImage(img, 0, 0, w, h);
 
-          // Use target format for convert, keep original format for compress/resize
-          const mime = mode === "convert" ? targetFormat : file.type || "image/png";
           const q = quality / 100;
-
-          const dataUrl = canvas.toDataURL(mime, q);
+          let dataUrl = canvas.toDataURL(mime, q);
+          const sizeOf = (url: string) => Math.round(((url.length - (url.indexOf(",") + 1)) * 3) / 4);
+          let estSize = sizeOf(dataUrl);
+          let note: string | undefined;
+          let outMime = mime;
+          if (mode === "compress" && mime !== file.type) {
+            note = "Browsers can't apply a quality setting to PNG, so it was compressed to WebP (transparency is kept).";
+          }
+          // Compressing must never hand back a bigger file: keep the original instead.
+          if (mode === "compress" && estSize >= file.size) {
+            dataUrl = e.target?.result as string;
+            estSize = file.size;
+            outMime = file.type;
+            note = "This image is already well optimised, so the original was kept. Try a lower quality or Resize Image to shrink it further.";
+          }
           setDownloadUrl(dataUrl);
 
-          const strLength = dataUrl.length - (dataUrl.indexOf(",") + 1);
-          const estSize = Math.round((strLength * 3) / 4);
-
-          const outputExt = mime.split("/")[1] || "png";
+          const outputExt = extensionFor(outMime);
+          const name = `${file.name.replace(/\.[^.]+$/, "") || "image"}.${outputExt}`;
+          setResult({ name, original: file.size, output: estSize, note });
 
           addHistoryItem({
-            fileName: `processed_${file.name.split(".")[0]}.${outputExt}`,
+            fileName: name,
             fileSize: estSize,
             toolType: `image-${mode}`,
             status: "success",
@@ -164,12 +188,15 @@ export function ImagePageClient() {
     reader.readAsDataURL(file);
   };
 
-  // Determine the correct file extension for the download
-  const getDownloadExtension = () => {
-    if (mode === "convert") return targetFormat.split("/")[1] || "png";
-    if (selectedFiles.length > 0) return selectedFiles[0].type.split("/")[1] || "png";
-    return "png";
+  // Output format: the chosen one for convert; otherwise keep the original where the
+  // browser can re-encode it, compressing PNG/GIF/BMP to WebP since PNG ignores quality.
+  const outputMime = (file: File) => {
+    if (mode === "convert") return targetFormat;
+    if (file.type === "image/jpeg" || file.type === "image/webp") return file.type;
+    return mode === "compress" ? "image/webp" : "image/png";
   };
+  const extensionFor = (mime: string) => (mime === "image/jpeg" ? "jpg" : mime.split("/")[1] || "png");
+  const formatSize = (bytes: number) => (bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(2)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`);
 
   const isPinned = favorites.includes("image-tools");
 
@@ -333,12 +360,20 @@ export function ImagePageClient() {
               </div>
               <div>
                 <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">Success! Image Ready</span>
-                <span className="text-[10px] text-slate-400">Your processed image is ready for download.</span>
+                {result ? (
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block">
+                    {formatSize(result.original)} → {formatSize(result.output)}
+                    {result.output < result.original && ` (−${Math.round((1 - result.output / result.original) * 100)}%)`}
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-slate-400">Your processed image is ready for download.</span>
+                )}
+                {result?.note && <span className="text-[10px] text-amber-600 dark:text-amber-400 block mt-0.5">{result.note}</span>}
               </div>
             </div>
             <a
               href={downloadUrl}
-              download={`processed_${Date.now()}.${getDownloadExtension()}`}
+              download={result?.name ?? "image"}
               className="px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-500 hover:bg-emerald-600 text-white transition-all shadow-sm"
             >
               Download Image

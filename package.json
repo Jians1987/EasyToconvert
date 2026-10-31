@@ -3,15 +3,22 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "postinstall": "node scripts/copy-vendor.mjs",
+    "predev": "node scripts/copy-vendor.mjs",
     "dev": "next dev",
+    "prebuild": "node scripts/copy-vendor.mjs",
     "build": "next build",
     "start": "next start",
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@ffmpeg/core": "0.12.6",
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@ffmpeg/util": "^0.12.2",
     "@huggingface/transformers": "^3.5.2",
+    "@neslinesli93/qpdf-wasm": "0.3.0",
+    "@tesseract.js-data/eng": "^1.0.0",
+    "@vercel/analytics": "1.5.0",
     "docx": "^9.7.1",
     "exceljs": "^4.4.0",
     "js-yaml": "^4.1.0",
@@ -19,9 +26,11 @@
     "next": "15.5.20",
     "pdf-lib": "^1.17.1",
     "pdf-lib-plus-encrypt": "^1.1.0",
+    "pdfjs-dist": "3.11.174",
     "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "sharp": "0.34.5",
     "tesseract.js": "^6.0.1"
   },
   "devDependencies": {

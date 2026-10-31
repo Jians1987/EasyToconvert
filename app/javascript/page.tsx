@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { JavascriptPageClient } from "./PageClient";
 
 export const metadata: Metadata = {
-  title: "Free JavaScript & CSS Tools – Minifier, Formatter, Box-Shadow | EasyToConvert",
+  title: "Free JavaScript & CSS Tools – Minifier, Formatter, Box-Shadow",
   description:
     "Minify and format JavaScript and CSS code online. Generate CSS box-shadows, gradients, and more with live preview.",
   keywords: [

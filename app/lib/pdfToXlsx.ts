@@ -20,6 +20,8 @@ import {
   type PdfTextItem,
 } from "./pdfTextExtractor";
 import { extractTables, type PdfTextItem as TatrTextItem } from "./tableExtractor";
+import { loadPdfJs } from "@/app/lib/pdfjs";
+import { postAi } from "@/app/lib/aiClient";
 
 
 async function renderPageForTatr(
@@ -295,18 +297,7 @@ function detectHeaderRow(grid: string[][]): boolean {
 // ─── Cloud AI table extraction ──────────────────────────────────────────────
 
 async function extractTableWithNemotron(pngBase64: string): Promise<string[][]> {
-  const res = await fetch("/api/ai", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action: "nemotron-ocr", imageBase64: pngBase64 }),
-  });
-
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Nemotron OCR Proxy ${res.status}: ${errText.slice(0, 200)}`);
-  }
-
-  const data = await res.json();
+  const data = await postAi({ action: "nemotron-ocr", imageBase64: pngBase64 });
   let markdown = data.text || "";
 
   // Parse markdown tables into a 2D grid
@@ -337,20 +328,3 @@ async function renderPageToCanvas(page: any, scale: number): Promise<HTMLCanvasE
   return canvas;
 }
 
-function loadPdfJs(): Promise<any> {
-  return new Promise((resolve, reject) => {
-    if (typeof window !== "undefined" && (window as any).pdfjsLib) {
-      resolve((window as any).pdfjsLib);
-      return;
-    }
-    const script = document.createElement("script");
-    script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
-    script.onload = () => {
-      (window as any).pdfjsLib.GlobalWorkerOptions.workerSrc =
-        "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-      resolve((window as any).pdfjsLib);
-    };
-    script.onerror = () => reject(new Error("Failed to load PDF.js engine."));
-    document.head.appendChild(script);
-  });
-}

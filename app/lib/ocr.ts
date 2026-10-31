@@ -1,8 +1,10 @@
 // On-device OCR via Tesseract.js (WebAssembly). Runs entirely in the browser —
-// the worker, core, and language data are fetched from a CDN once, then all
-// recognition happens locally. No image data is ever uploaded to a server.
+// the worker, core, and language data are served from our own origin
+// (scripts/copy-vendor.mjs), falling back to the library's CDN defaults, then
+// all recognition happens locally. No image data is ever uploaded to a server.
 
 import Tesseract from "tesseract.js";
+import { postAi } from "@/app/lib/aiClient";
 
 export interface OcrResult {
   text: string;
@@ -10,6 +12,21 @@ export interface OcrResult {
 }
 
 type OcrImage = string | HTMLCanvasElement | File | Blob;
+
+// Absolute URLs: the Tesseract worker runs from a blob: URL, where relative paths don't resolve.
+const localPaths = () => {
+  const base = `${window.location.origin}/vendor/tesseract`;
+  return { workerPath: `${base}/worker.min.js`, corePath: `${base}/core`, langPath: `${base}/lang` };
+};
+
+/** Tesseract.recognize using the self-hosted engine first, then the CDN defaults. */
+export async function recognize(image: OcrImage, options: Record<string, unknown> = {}) {
+  try {
+    return await Tesseract.recognize(image as any, "eng", { ...options, ...localPaths() });
+  } catch {
+    return await Tesseract.recognize(image as any, "eng", options);
+  }
+}
 
 /**
  * Recognize text in an image / canvas / data-URL.
@@ -19,7 +36,7 @@ export async function ocrImage(
   image: OcrImage,
   onProgress?: (percent: number) => void
 ): Promise<OcrResult> {
-  const result = await Tesseract.recognize(image as any, "eng", {
+  const result = await recognize(image, {
     logger: (m: { status: string; progress: number }) => {
       if (m.status === "recognizing text" && onProgress) {
         onProgress(Math.min(100, Math.max(0, Math.round(m.progress * 100))));
@@ -77,23 +94,7 @@ export async function ocrImageWithNemotron(
   if (onProgress) onProgress(30); // Image processed
   
   if (onProgress) onProgress(60); // Sending to proxy
-  const res = await fetch("/api/ai", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      action: "nemotron-ocr",
-      imageBase64: b64
-    })
-  });
-
-  if (!res.ok) {
-    console.error("Nemotron OCR proxy failed:", await res.text());
-    throw new Error(`Nemotron OCR API Error: ${res.status}`);
-  }
-
-  const data = await res.json();
+  const data = await postAi({ action: "nemotron-ocr", imageBase64: b64 });
   if (onProgress) onProgress(100);
   
   return {

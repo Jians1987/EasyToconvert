@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { ApiDocsPageClient } from "./PageClient";
 
 export const metadata: Metadata = {
-  title: "API Documentation | EasyToConvert",
+  title: "Developer API Documentation",
   description:
     "Read the EasyToConvert API documentation to learn how to integrate our tools into your own applications.",
   alternates: { canonical: "https://www.easytoconvert.in/api-docs" },

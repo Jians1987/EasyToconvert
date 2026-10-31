@@ -4,6 +4,7 @@ import { Providers } from "./providers";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import Script from "next/script";
+import { Analytics } from "@vercel/analytics/next";
 
 const siteUrl = "https://www.easytoconvert.in";
 
@@ -91,8 +92,10 @@ export const metadata: Metadata = {
     apple: "/apple-touch-icon.png",
   },
   manifest: "/manifest.json",
+  // Set GOOGLE_SITE_VERIFICATION / BING_SITE_VERIFICATION to the codes from Search Console / Bing Webmaster Tools.
   verification: {
-    google: "google-site-verification-placeholder",
+    ...(process.env.GOOGLE_SITE_VERIFICATION ? { google: process.env.GOOGLE_SITE_VERIFICATION } : {}),
+    ...(process.env.BING_SITE_VERIFICATION ? { other: { "msvalidate.01": process.env.BING_SITE_VERIFICATION } } : {}),
   },
 };
 
@@ -117,14 +120,6 @@ const websiteJsonLd = {
       description:
         "Free, privacy-first online tools for PDF conversion, image editing, developer utilities, and more.",
       publisher: { "@id": `${siteUrl}/#organization` },
-      potentialAction: {
-        "@type": "SearchAction",
-        target: {
-          "@type": "EntryPoint",
-          urlTemplate: `${siteUrl}/?q={search_term_string}`,
-        },
-        "query-input": "required name=search_term_string",
-      },
       inLanguage: "en-IN",
     },
     {
@@ -159,13 +154,13 @@ const websiteJsonLd = {
       },
       featureList: [
         "Merge, split, rotate, protect and edit PDF files",
-        "Convert PDF to Word, Excel, JPG",
+        "Compress PDF and convert PDF to Word, Excel, JPG",
         "Compress, resize, and convert images",
         "JSON / CSV / XML data formatting tools",
-        "QR code generator, Base64 encoder, Hash generator",
-        "CSS minifier, Box-shadow generator",
+        "QR code, password and UUID generators, Base64 and URL encoders",
+        "JavaScript, CSS and HTML minifiers, CSS gradient and box-shadow generators",
         "AI-powered PDF summarizer and OCR",
-        "Video and audio compression via FFmpeg.wasm",
+        "Audio compression, video-to-MP3 extraction and audio trimming via FFmpeg.wasm",
         "All processing done locally in the browser",
       ],
     },
@@ -202,6 +197,8 @@ export default function RootLayout({
             <Footer />
           </div>
         </Providers>
+        {/* Privacy-friendly, cookie-free page analytics; only loads on Vercel deployments. */}
+        {process.env.VERCEL === "1" && <Analytics />}
       </body>
     </html>
   );

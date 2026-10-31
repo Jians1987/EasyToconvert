@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { ContactPageClient } from "./PageClient";
 
 export const metadata: Metadata = {
-  title: "Contact Us | EasyToConvert",
+  title: "Contact Us",
   description:
     "Get in touch with the EasyToConvert team. We'd love to hear your feedback, feature requests, or questions.",
   alternates: { canonical: "https://www.easytoconvert.in/contact" },

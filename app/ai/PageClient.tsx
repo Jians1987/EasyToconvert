@@ -7,6 +7,8 @@ import Dropzone from "@/components/Dropzone";
 import { useConversions } from "@/app/providers";
 import { ocrImage, ocrImageWithNemotron, looksScanned } from "@/app/lib/ocr";
 import { Sparkles, Star, BrainCircuit, Key, Send, FileText, Info, ScanText } from "lucide-react";
+import { loadPdfJs } from "@/app/lib/pdfjs";
+import { postAi } from "@/app/lib/aiClient";
 
 type AiMode = "summarize" | "explain" | "translate" | "ocr";
 
@@ -75,41 +77,9 @@ function SafeMarkdown({ text }: { text: string }) {
   return <div className="space-y-0.5 text-xs">{elements}</div>;
 }
 
-// Shared PDF.js loader
-const loadPdfJs = (): Promise<any> => {
-  return new Promise((resolve, reject) => {
-    if (typeof window !== "undefined" && (window as any).pdfjsLib) {
-      resolve((window as any).pdfjsLib);
-      return;
-    }
-    const script = document.createElement("script");
-    script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
-    script.onload = () => {
-      (window as any).pdfjsLib.GlobalWorkerOptions.workerSrc =
-        "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-      resolve((window as any).pdfjsLib);
-    };
-    script.onerror = () => reject(new Error("Failed to load PDF.js"));
-    document.head.appendChild(script);
-  });
-};
 
 async function callDeepSeekAPI(prompt: string, systemPrompt?: string) {
-  const res = await fetch("/api/ai", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      action: "deepseek-chat",
-      prompt,
-      systemPrompt
-    })
-  });
-  
-  if (!res.ok) {
-    throw new Error(`DeepSeek API Error: ${res.status} ${await res.text()}`);
-  }
-  
-  return await res.json();
+  return postAi({ action: "deepseek-chat", prompt, systemPrompt });
 }
 
 export function AiPageClient() {

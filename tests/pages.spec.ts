@@ -65,8 +65,9 @@ test.describe("Navbar", () => {
 
   test("quick-search dropdown lists matches", async ({ page }) => {
     await page.goto("/");
-    await page.getByPlaceholder("Quick find tool...").fill("base64");
-    await expect(page.getByRole("link", { name: /Base64 Encoder/i })).toBeVisible();
+    await page.getByRole("button", { name: "Search tools", exact: true }).click();
+    await page.getByRole("dialog").getByRole("combobox").fill("base64");
+    await expect(page.getByRole("option", { name: /Base64/i }).first()).toBeVisible();
   });
 
   test("mobile menu opens and navigates", async ({ page }) => {
@@ -89,18 +90,19 @@ test.describe("Footer", () => {
     await expect(page).toHaveURL(/\/about$/);
     await page.getByRole("link", { name: "API Documentation" }).click();
     await expect(page).toHaveURL(/\/api-docs$/);
-    await page.getByRole("link", { name: "Blog" }).click();
+    await page.getByRole("link", { name: "Guides", exact: true }).click();
     await expect(page).toHaveURL(/\/blog$/);
   });
 });
 
 // ───────────── Home ─────────────
 test.describe("Home", () => {
-  test("tool chips now navigate to their hub (dead-control fix)", async ({ page }) => {
+  test("tool chips navigate to their dedicated tool page", async ({ page }) => {
     await page.goto("/");
     // the category chip appears before the footer link of the same name
     await page.getByRole("link", { name: "JSON Formatter", exact: true }).first().click();
-    await expect(page).toHaveURL(/\/data$/);
+    await expect(page).toHaveURL(/\/json-formatter$/);
+    await expect(page.getByRole("heading", { level: 1, name: /Format, validate and minify JSON/ })).toBeVisible();
   });
 
   test("Launch buttons + CTA links work", async ({ page }) => {
@@ -129,8 +131,8 @@ test.describe("Home", () => {
       await expect(page.getByText(gone, { exact: true })).toHaveCount(0);
     }
     // shipped replacements are present and clickable
-    for (const shipped of ["URL Encoder", "Password Maker", "Document Translator", "JSON Minifier", "Box Shadow"]) {
-      await expect(page.getByRole("link", { name: shipped, exact: true })).toBeVisible();
+    for (const shipped of ["URL Encoder / Decoder", "Password Generator", "Image to Text (OCR)", "Compress PDF", "Box Shadow Generator"]) {
+      await expect(page.getByRole("link", { name: shipped, exact: true }).first()).toBeVisible();
     }
   });
 
@@ -138,7 +140,7 @@ test.describe("Home", () => {
     await page.goto("/");
     const card = page.locator("div").filter({ hasText: /^Video & Audio/ }).first();
     await expect(card.getByText("Soon", { exact: true })).toHaveCount(0);
-    await expect(page.getByRole("link", { name: "Extract Audio", exact: true }).first()).toBeVisible();
+    await expect(page.getByRole("link", { name: "Video to MP3", exact: true }).first()).toBeVisible();
   });
 });
 
@@ -156,10 +158,15 @@ test.describe("Contact", () => {
 
 // ───────────── Blog ─────────────
 test.describe("Blog", () => {
-  test("Read Article navigates (dead-control fix)", async ({ page }) => {
+  test("Read Article opens the full article", async ({ page }) => {
     await page.goto("/blog");
-    await page.getByRole("link", { name: /Read Article/i }).first().click();
-    await expect(page).toHaveURL(/\/image$/);
+    // Each "Read Article" link is labelled with its article title for screen readers
+    await page.getByRole("link", { name: /^Read: / }).first().click();
+    await expect(page).toHaveURL(/\/blog\/reduce-photo-size-for-online-forms$/);
+    await expect(page.getByRole("heading", { level: 1, name: /Reduce Photo and Signature Size/ })).toBeVisible();
+    // Each article links to the tools it recommends
+    await page.getByRole("link", { name: /Resize Image/ }).click();
+    await expect(page).toHaveURL(/\/resize-image$/);
   });
 });
 
@@ -169,12 +176,21 @@ test.describe("API docs", () => {
     await page.goto("/api-docs");
     await expect(page.locator("pre")).toContainText("curl");
     await page.getByRole("button", { name: "NodeJS" }).click();
-    await expect(page.locator("pre")).toContainText("axios");
+    await expect(page.locator("pre")).toContainText("fetch(");
     await page.getByRole("button", { name: "python" }).click();
     await expect(page.locator("pre")).toContainText("requests");
     await page.locator("pre ~ button, .relative > button").first().click();
     const clip = await page.evaluate(() => navigator.clipboard.readText());
     expect(clip).toContain("requests");
+  });
+
+  test("endpoint picker shows the example for each real endpoint", async ({ page }) => {
+    await page.goto("/api-docs");
+    await page.getByLabel("Endpoint").selectOption("/api/v1/pdf/merge");
+    await expect(page.locator("pre")).toContainText("files=@second.pdf");
+    await page.getByLabel("Endpoint").selectOption("/api/v1/data/csv-to-json");
+    await expect(page.locator("pre")).toContainText("text/csv");
+    await expect(page.locator("pre")).toContainText("https://www.easytoconvert.in/api/v1/");
   });
 });
 
@@ -206,6 +222,20 @@ test.describe("AI tools", () => {
     await page.getByRole("button", { name: /Run AI translate/i }).click();
     // scope to the output panel — the engine banner also mentions "translation previews"
     await expect(page.locator(".prose").getByText(/DeepSeek Translation/i)).toBeVisible();
+  });
+
+  test("unconfigured cloud AI shows a readable error, not raw JSON", async ({ page }) => {
+    await page.route("**/api/ai", (route) => route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "AI tools are not configured" }),
+    }));
+    await page.goto("/ai");
+    await page.getByRole("button", { name: "Document Translator" }).click();
+    await page.locator(inputArea).fill("Hello world");
+    await page.getByRole("button", { name: /Run AI translate/i }).click();
+    await expect(page.getByText(/Cloud AI features aren't available/i)).toBeVisible();
+    await expect(page.getByText(/\{"error"/)).toHaveCount(0);
   });
 
   test("summarize button is disabled until a file is chosen", async ({ page }) => {
@@ -284,11 +314,19 @@ test.describe("Dashboard", () => {
   test("API key generate → reveal → regenerate", async ({ page }) => {
     await page.goto("/dashboard");
     await page.getByRole("button", { name: /Create API Developer Token/i }).click();
-    await expect(page.getByText(/^•+$/)).toBeVisible(); // masked
-    await page.locator("div.font-mono button").first().click(); // reveal (Eye)
-    await expect(page.getByText(/^ehp_/)).toBeVisible();
+    await expect(page.getByText(/^etc_/)).toBeVisible();
+    const first = await page.getByText(/^etc_/).textContent();
     await page.getByRole("button", { name: /Regenerate/i }).click();
-    await expect(page.getByText(/^ehp_/)).toBeVisible();
+    await expect(page.getByText(/^etc_/)).not.toHaveText(first!);
+    // The key survives a reload and is accepted by the real API
+    await page.reload();
+    await page.getByRole("button", { name: "Show API key" }).click();
+    const key = (await page.getByText(/^etc_/).textContent())!;
+    const res = await page.request.post("/api/v1/data/csv-to-json", {
+      headers: { Authorization: `Bearer ${key}` },
+      data: { csv_data: "a\n1" },
+    });
+    expect(res.status()).toBe(200);
   });
 
   test("clear history empties the table", async ({ page }) => {

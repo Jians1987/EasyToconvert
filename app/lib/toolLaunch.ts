@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
+import { useToolPage } from "@/components/ToolPageContext";
 
 // Ephemeral handoff only: never serialize file contents to storage or a URL.
 let pending: { file: File; path: string } | null = null;
@@ -17,10 +18,12 @@ export function takeFile(path: string) {
 export function useToolMode<T extends string>(setMode: (mode: T) => void, allowed: readonly T[], special?: (hash: string) => boolean) {
   const latest = useRef({ setMode, allowed, special });
   latest.current = { setMode, allowed, special };
+  // On a dedicated tool page the page's mode is the default; a URL hash still wins.
+  const pageMode = useToolPage()?.mode;
   useEffect(() => {
     const sync = () => {
       const { setMode, allowed, special } = latest.current;
-      const hash = window.location.hash.slice(1);
+      const hash = window.location.hash.slice(1) || pageMode || "";
       if (special?.(hash)) return;
       if (allowed.includes(hash as T)) setMode(hash as T);
     };

@@ -6,6 +6,7 @@ import ToolLayout from "@/components/ToolLayout";
 import { useConversions } from "@/app/providers";
 import yaml from "js-yaml";
 import { Database, FileCode, CheckCircle, AlertCircle, Copy, Check, Star } from "lucide-react";
+import { csvToObjects } from "@/app/lib/csv";
 
 type DataMode = "json-format" | "csv-json" | "xml-json" | "json-yaml";
 
@@ -50,40 +51,8 @@ export function DataPageClient() {
             setOutputText([headers.map(escape).join(","), ...rows.map((row) => headers.map((key) => escape(row[key])).join(","))].join("\r\n"));
             return;
           }
-          // CSV to JSON — RFC 4180 compliant parser supporting quoted fields with commas
-          const parseCsvLine = (line: string): string[] => {
-            const fields: string[] = [];
-            let current = "";
-            let inQuotes = false;
-            for (let i = 0; i < line.length; i++) {
-              const ch = line[i];
-              if (ch === '"') {
-                if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
-                else { inQuotes = !inQuotes; }
-              } else if (ch === "," && !inQuotes) {
-                fields.push(current.trim());
-                current = "";
-              } else {
-                current += ch;
-              }
-            }
-            fields.push(current.trim());
-            return fields;
-          };
-
-          const lines = inputText.trim().split("\n");
-          if (lines.length < 2) throw new Error("CSV must contain at least a header and one data row.");
-          const headers = parseCsvLine(lines[0]);
-          const result = [];
-          for (let i = 1; i < lines.length; i++) {
-            if (!lines[i].trim()) continue;
-            const obj: { [key: string]: string } = {};
-            const values = parseCsvLine(lines[i]);
-            headers.forEach((header, index) => {
-              obj[header] = values[index] ?? "";
-            });
-            result.push(obj);
-          }
+          // CSV to JSON — RFC 4180 parser (quoted commas, quotes and line breaks)
+          const result = csvToObjects(inputText);
           setOutputText(JSON.stringify(result, null, 2));
         }
       } else if (mode === "xml-json") {
