@@ -14,6 +14,7 @@ import {
   Paintbrush, ChevronsUpDown, MousePointer, Check, ArrowRight, Upload, Signature
 } from "lucide-react";
 import { loadPdfJs } from "@/app/lib/pdfjs";
+import { unlockPdf } from "@/app/lib/qpdf";
 import { postAi } from "@/app/lib/aiClient";
 
 // Cloud-AI table extraction (opt-in). Uses the server-side proxy (/api/ai)
@@ -368,7 +369,9 @@ export function PdfPageClient() {
             ignoreEncryption: true,
             updateMetadata: false 
           });
-          if (pdf.isEncrypted) {
+          // Owner-password-only PDFs open without a password, so only prompt
+          // when the file can't be unlocked with an empty one.
+          if (pdf.isEncrypted && !(await unlockPdf(new Uint8Array(arrayBuffer)))) {
             setIsEncrypted(true);
             return;
           }
@@ -607,19 +610,24 @@ export function PdfPageClient() {
       const { PDFDocument: PdfLibDocument, degrees, rgb, StandardFonts } = await import("pdf-lib-plus-encrypt");
 
       // Handle encrypted PDFs
+      // pdf-lib can't decrypt, so encrypted PDFs are unlocked with qpdf first.
+      // Copying pages out of a still-encrypted file would produce garbage.
       const loadWithPassword = async (file: File) => {
-        const arrayBuffer = await file.arrayBuffer();
+        const bytes = new Uint8Array(await file.arrayBuffer());
         try {
-          return await PdfLibDocument.load(new Uint8Array(arrayBuffer));
+          return await PdfLibDocument.load(bytes);
         } catch (e: any) {
-          if (e.message?.includes('password') || e.message?.includes('encrypted')) {
-            if (!inputPassword) {
-              throw new Error('This PDF is password protected. Please enter the password.');
-            }
-            return await PdfLibDocument.load(new Uint8Array(arrayBuffer), { password: inputPassword } as any);
+          if (!/encrypt|password/i.test(e?.message ?? "")) {
+            throw new Error(`"${file.name}" couldn't be read. It may be damaged or not a real PDF.`);
           }
-          throw e;
         }
+        const unlocked = await unlockPdf(bytes, inputPassword);
+        if (!unlocked) {
+          throw new Error(inputPassword
+            ? `The password for "${file.name}" is incorrect.`
+            : `"${file.name}" is password protected. Enter its password above and try again.`);
+        }
+        return await PdfLibDocument.load(unlocked);
       };
 
       if (mode === "merge") {
@@ -1026,7 +1034,7 @@ export function PdfPageClient() {
             <AlertTriangle className="w-4 h-4 flex-shrink-0" />
             <div>
               <span className="font-bold">Password Protected PDF</span>
-              <p className="mt-0.5">This PDF is encrypted. Please enter the password to process it.</p>
+              <p className="mt-0.5">This PDF needs a password to open. Enter it below — it's only used on your device to unlock the file.</p>
             </div>
           </div>
         )}

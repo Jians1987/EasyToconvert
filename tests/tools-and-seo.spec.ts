@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { PDFDocument, StandardFonts, degrees } from "pdf-lib";
+import { PDFDocument as EncryptingPDFDocument } from "pdf-lib-plus-encrypt";
 import sharp from "sharp";
 import { toolLinks } from "../app/lib/toolLinks";
 import { blogPosts } from "../app/lib/blogPosts";
@@ -244,5 +245,72 @@ test.describe("Image fixes", () => {
     await expect(link).toHaveAttribute("download", "logo.jpg");
     const { data } = await sharp(await fetchBytes(page, (await link.getAttribute("href"))!)).raw().toBuffer({ resolveWithObject: true });
     expect(data[0]).toBeGreaterThan(240);
+  });
+});
+
+test.describe("Merge PDF", () => {
+  // Distinct page sizes let us check the merged order without text extraction.
+  async function sized(width: number, pages: number): Promise<Buffer> {
+    const doc = await PDFDocument.create();
+    for (let i = 0; i < pages; i++) doc.addPage([width, 400]);
+    return Buffer.from(await doc.save());
+  }
+  async function encrypted(width: number, userPassword: string): Promise<Buffer> {
+    const doc = await EncryptingPDFDocument.create();
+    doc.addPage([width, 400]);
+    doc.encrypt({ userPassword, ownerPassword: "owner-secret", permissions: { copying: false, modifying: false } });
+    return Buffer.from(await doc.save());
+  }
+  async function mergeAndRead(page: Page, files: { name: string; buffer: Buffer }[], password?: string) {
+    await page.goto("/merge-pdf");
+    await page.locator("input[type=file]").setInputFiles(files.map((f) => ({ ...f, mimeType: "application/pdf" })));
+    if (password !== undefined) await page.getByPlaceholder("Enter PDF password...").fill(password);
+    await page.getByRole("button", { name: /Process PDF Merge/i }).click();
+    const link = page.getByRole("link", { name: /Download File/i });
+    await expect(link).toBeVisible({ timeout: 30000 });
+    return PDFDocument.load(await fetchBytes(page, (await link.getAttribute("href"))!));
+  }
+  const widths = (doc: PDFDocument) => doc.getPages().map((p) => p.getWidth());
+
+  test("produces a valid PDF with every page in order", async ({ page }) => {
+    const doc = await mergeAndRead(page, [{ name: "a.pdf", buffer: await sized(300, 2) }, { name: "b.pdf", buffer: await sized(500, 3) }]);
+    expect(widths(doc)).toEqual([300, 300, 500, 500, 500]);
+  });
+
+  test("merges owner-password-only PDFs without asking for a password", async ({ page }) => {
+    const restricted = await encrypted(450, "");
+    await page.goto("/merge-pdf");
+    await page.locator("input[type=file]").setInputFiles([
+      { name: "statement.pdf", mimeType: "application/pdf", buffer: restricted },
+      { name: "b.pdf", mimeType: "application/pdf", buffer: await sized(500, 1) },
+    ]);
+    await expect(page.getByPlaceholder("Enter PDF password...")).toHaveCount(0);
+    const doc = await mergeAndRead(page, [{ name: "statement.pdf", buffer: restricted }, { name: "b.pdf", buffer: await sized(500, 1) }]);
+    expect(widths(doc)).toEqual([450, 500]);
+  });
+
+  test("unlocks password-protected PDFs with the right password and rejects a wrong one", async ({ page }) => {
+    const locked = await encrypted(350, "open-sesame");
+    const doc = await mergeAndRead(page, [{ name: "locked.pdf", buffer: locked }, { name: "b.pdf", buffer: await sized(500, 1) }], "open-sesame");
+    expect(widths(doc)).toEqual([350, 500]);
+
+    const dialog = page.waitForEvent("dialog");
+    await page.goto("/merge-pdf");
+    await page.locator("input[type=file]").setInputFiles([
+      { name: "locked.pdf", mimeType: "application/pdf", buffer: locked },
+      { name: "b.pdf", mimeType: "application/pdf", buffer: await sized(500, 1) },
+    ]);
+    await page.getByPlaceholder("Enter PDF password...").fill("wrong");
+    await page.getByRole("button", { name: /Process PDF Merge/i }).click();
+    const d = await dialog;
+    expect(d.message()).toContain('The password for "locked.pdf" is incorrect');
+    await d.dismiss();
+  });
+
+  test("history never offers dead download links after a reload", async ({ page }) => {
+    await mergeAndRead(page, [{ name: "a.pdf", buffer: await sized(300, 1) }, { name: "b.pdf", buffer: await sized(500, 1) }]);
+    await page.goto("/dashboard");
+    await expect(page.getByText(/merged/i).first()).toBeVisible();
+    await expect(page.locator('a[href^="blob:"]')).toHaveCount(0);
   });
 });

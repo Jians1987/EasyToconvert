@@ -13,6 +13,7 @@ const files = [
   ["@ffmpeg/core/dist/umd/ffmpeg-core.js", "ffmpeg/ffmpeg-core.js"],
   ["@ffmpeg/core/dist/umd/ffmpeg-core.wasm", "ffmpeg/ffmpeg-core.wasm"],
   ["tesseract.js/dist/worker.min.js", "tesseract/worker.min.js"],
+  ["@neslinesli93/qpdf-wasm/dist/qpdf.wasm", "qpdf/qpdf.wasm"],
   ["@tesseract.js-data/eng/4.0.0_best_int/eng.traineddata.gz", "tesseract/lang/eng.traineddata.gz"],
 ];
 for (const core of ["tesseract-core", "tesseract-core-simd", "tesseract-core-lstm", "tesseract-core-simd-lstm"]) {

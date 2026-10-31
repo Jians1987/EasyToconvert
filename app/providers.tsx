@@ -30,6 +30,11 @@ type ConversionContextType = {
 };
 const ConversionContext = createContext<ConversionContextType | undefined>(undefined);
 
+// blob: URLs only live as long as the page that created them, so they're kept in
+// memory for this visit but never persisted.
+const withoutBlobUrl = (item: ConversionHistoryItem): ConversionHistoryItem =>
+  item.downloadUrl?.startsWith("blob:") ? { ...item, downloadUrl: undefined } : item;
+
 export function Providers({ children }: { children: React.ReactNode }) {
   // Theme State
   const [theme, setTheme] = useState<Theme>("dark");
@@ -82,7 +87,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     try {
       const savedHistory = localStorage.getItem("conversion_history");
-      if (savedHistory) setHistory(JSON.parse(savedHistory));
+      // Older saves may contain blob: URLs, which are dead after a reload; drop them
+      // so the dashboard doesn't offer downloads that fail.
+      if (savedHistory) setHistory((JSON.parse(savedHistory) as ConversionHistoryItem[]).map(withoutBlobUrl));
     } catch (e) {
       console.error("Failed to load history", e);
     }
@@ -108,7 +115,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
   // write fails we retry with metadata only (dropping the heavy data URLs).
   const persistHistory = (items: ConversionHistoryItem[]) => {
     try {
-      localStorage.setItem("conversion_history", JSON.stringify(items));
+      localStorage.setItem("conversion_history", JSON.stringify(items.map(withoutBlobUrl)));
     } catch {
       try {
         const slim = items.map(({ downloadUrl, ...rest }) => rest);
